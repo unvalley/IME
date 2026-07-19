@@ -1,0 +1,42 @@
+import AppKit
+import Carbon
+import InputMethodKit
+
+var sharedServer: IMKServer!
+
+final class NSManualApplication: NSApplication {
+    private let appDelegate = AppDelegate()
+
+    override init() {
+        super.init()
+        delegate = appDelegate
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let bundle = Bundle.main
+        guard let connectionName = bundle.object(
+            forInfoDictionaryKey: "InputMethodConnectionName"
+        ) as? String,
+            let bundleIdentifier = bundle.bundleIdentifier,
+            let server = IMKServer(name: connectionName, bundleIdentifier: bundleIdentifier)
+        else {
+            fatalError("Input method bundle configuration is invalid")
+        }
+
+        sharedServer = server
+        let registrationStatus = TISRegisterInputSource(bundle.bundleURL as CFURL)
+        if registrationStatus != noErr {
+            let message = "TISRegisterInputSource failed: \(registrationStatus)\n"
+            FileHandle.standardError.write(Data(message.utf8))
+        }
+    }
+}
+
+let application = NSManualApplication.shared
+application.run()
