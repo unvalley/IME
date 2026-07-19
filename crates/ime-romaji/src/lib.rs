@@ -193,8 +193,8 @@ fn matching_entries(input: &str) -> &'static [(&'static str, &'static str)] {
 }
 
 // Kana mappings follow Mozc's default romaji table. Stateful `n`/sokuon rules
-// are handled above, while punctuation and Mozc's `z` shortcuts are not kana
-// composition and therefore stay outside this table.
+// are handled above. Arrow shortcuts are kept here as composition results so
+// they remain editable in the same preedit as kana.
 const ROMAJI_TABLE: &[(&str, &str)] = &[
     ("a", "あ"),
     ("i", "い"),
@@ -247,6 +247,11 @@ const ROMAJI_TABLE: &[(&str, &str)] = &[
     ("zyu", "じゅ"),
     ("zye", "じぇ"),
     ("zyo", "じょ"),
+    ("zh", "←"),
+    ("zj", "↓"),
+    ("zk", "↑"),
+    ("zl", "→"),
+    ("zm", "→"),
     ("ja", "じゃ"),
     ("jya", "じゃ"),
     ("jyi", "じぃ"),
@@ -531,6 +536,16 @@ mod tests {
         assert_eq!(compose("xtsu"), "っ");
         assert_eq!(compose("xka"), "ヵ");
         assert_eq!(compose("wye"), "ゑ");
+    }
+
+    #[test]
+    fn converts_arrow_shortcuts() {
+        assert_eq!(compose("zh"), "←");
+        assert_eq!(compose("zj"), "↓");
+        assert_eq!(compose("zk"), "↑");
+        assert_eq!(compose("zl"), "→");
+        assert_eq!(compose("zm"), "→");
+        assert_eq!(compose("zhzm"), "←→");
     }
 
     #[test]

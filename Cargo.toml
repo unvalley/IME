@@ -4,6 +4,7 @@ members = [
     "crates/ime-core",
     "crates/ime-ffi",
     "crates/ime-romaji",
+    "crates/ime-tools",
 ]
 resolver = "3"
 

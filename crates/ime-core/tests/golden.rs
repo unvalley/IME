@@ -34,6 +34,7 @@ fn core_conversion_golden_cases() {
             "精度を高める工夫をしていきましょう",
         ),
         ("jishowokakujuusasemashou", "辞書を拡充させましょう"),
+        ("hashidetaberu", "箸で食べる"),
     ];
 
     for (input, expected) in cases {

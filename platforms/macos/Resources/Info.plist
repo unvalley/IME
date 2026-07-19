@@ -15,7 +15,7 @@
     <key>CFBundleShortVersionString</key>
     <string>0.1</string>
     <key>CFBundleVersion</key>
-    <string>8</string>
+    <string>11</string>
     <key>ComponentInputModeDict</key>
     <dict>
         <key>tsInputModeListKey</key>
@@ -51,11 +51,11 @@
     <string>com.unvalley.inputmethod.Unvalley_Connection</string>
     <key>InputMethodServerControllerClass</key>
     <string>Unvalley.UnvalleyController</string>
-    <key>InputMethodServerDelegateClass</key>
-    <string>Unvalley.UnvalleyController</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>LSBackgroundOnly</key>
+    <true/>
+    <key>LSUIElement</key>
     <true/>
     <key>NSPrincipalClass</key>
     <string>Unvalley.NSManualApplication</string>

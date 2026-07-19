@@ -7,11 +7,14 @@ fn main() {
     let dictionary = Dictionary::bundled();
     let iterations = iterations(100_000);
 
-    run("converter/exact_candidates", iterations, || {
+    run("converter/candidate_window_single_word", iterations, || {
         black_box(dictionary.candidates(black_box("にほん")));
     });
     run("converter/segmented_phrase", iterations, || {
         black_box(dictionary.convert_best(black_box("わたしはにほん")));
+    });
+    run("converter/n_best_phrase", iterations, || {
+        black_box(dictionary.candidates(black_box("わたしはにほん")));
     });
 }
 

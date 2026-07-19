@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         sharedServer = server
+        SettingsStatusItem.shared.install()
         let registrationStatus = TISRegisterInputSource(bundle.bundleURL as CFURL)
         if registrationStatus != noErr {
             let message = "TISRegisterInputSource failed: \(registrationStatus)\n"

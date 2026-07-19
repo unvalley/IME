@@ -13,6 +13,7 @@ final class UnvalleyController: IMKInputController {
     private var hasComposition = false
     private var candidateValues: [String] = []
     private var selectedCandidateIndex = 0
+    private var appliedOptions: InputRuntimeOptions?
 
     override init!(server: IMKServer!, delegate: Any!, client inputClient: Any!) {
         guard let engine = try? RustEngine() else {
@@ -21,9 +22,38 @@ final class UnvalleyController: IMKInputController {
         self.engine = engine
         candidatePanel = CandidatePanel()
         super.init(server: server, delegate: delegate, client: inputClient)
+        _ = synchronizeOptions(force: true)
         candidatePanel.onCandidateClicked = { [weak self] index in
             self?.selectCandidate(at: index, commit: true)
         }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(preferencesDidChange),
+            name: .unvalleyPreferencesDidChange,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(userDataDidChange),
+            name: .unvalleyUserDataDidChange,
+            object: nil
+        )
+    }
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
+    override func menu() -> NSMenu! {
+        let menu = NSMenu(title: "Unvalley IME")
+        let settings = NSMenuItem(
+            title: "Unvalley IME設定…",
+            action: #selector(openSettings(_:)),
+            keyEquivalent: ","
+        )
+        settings.target = self
+        menu.addItem(settings)
+        return menu
     }
 
     override func handle(_ event: NSEvent!, client sender: Any!) -> Bool {
@@ -83,6 +113,8 @@ final class UnvalleyController: IMKInputController {
             mappedEvent = .enter
         case 49:
             mappedEvent = .space
+        case 48 where !candidateValues.isEmpty:
+            mappedEvent = .acceptCandidate
         case 51:
             mappedEvent = .backspace
         case 53:
@@ -126,49 +158,106 @@ final class UnvalleyController: IMKInputController {
             return false
         }
 
+        guard synchronizeOptions(client: inputClient) else {
+            return false
+        }
+
         do {
             let actions = try engine.process(event)
-            var forwarded = false
-            for action in actions {
-                switch action.type {
-                case "update_preedit":
-                    let text = action.text ?? ""
-                    hasComposition = !text.isEmpty
-                    inputClient.setMarkedText(
-                        text,
-                        selectionRange: NSRange(location: text.utf16.count, length: 0),
-                        replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
-                    )
-                case "commit":
-                    inputClient.insertText(
-                        action.text ?? "",
-                        replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
-                    )
-                    hasComposition = false
-                case "clear":
-                    inputClient.setMarkedText(
-                        "",
-                        selectionRange: NSRange(location: 0, length: 0),
-                        replacementRange: NSRange(location: NSNotFound, length: NSNotFound)
-                    )
-                    hasComposition = false
-                case "forward_key":
-                    forwarded = true
-                case "show_candidates":
-                    showCandidates(
-                        action.candidates ?? [],
-                        selected: action.selected ?? 0,
-                        client: inputClient
-                    )
-                case "hide_candidates":
-                    hideCandidates()
-                default:
-                    NSLog("Unvalley IME: unknown action %@", action.type)
-                }
-            }
+            let forwarded = apply(actions, client: inputClient)
             return !forwarded
         } catch {
             NSLog("Unvalley IME: Rust engine error: %@", String(describing: error))
+            return false
+        }
+    }
+
+    @objc private func openSettings(_ sender: Any?) {
+        DispatchQueue.main.async {
+            SettingsWindowController.shared.present()
+        }
+    }
+
+    @objc private func preferencesDidChange() {
+        guard let inputClient = client() else {
+            return
+        }
+        _ = synchronizeOptions(force: true, client: inputClient)
+    }
+
+    @objc private func userDataDidChange() {
+        guard let inputClient = client() else {
+            return
+        }
+        do {
+            let actions = try engine.reloadUserData()
+            _ = apply(actions, client: inputClient)
+        } catch {
+            NSLog("Unvalley IME: failed to reload user data %@", String(describing: error))
+        }
+    }
+
+    private func apply(
+        _ actions: [RustEngine.Action],
+        client inputClient: any IMKTextInput & NSObjectProtocol
+    ) -> Bool {
+        var forwarded = false
+        let textClient = IMKTextMutationClient(base: inputClient)
+        for action in actions {
+            if let compositionState = applyTextMutation(action, client: textClient) {
+                hasComposition = compositionState
+                continue
+            }
+            switch action.type {
+            case "forward_key":
+                forwarded = true
+            case "show_candidates":
+                showCandidates(
+                    action.candidates ?? [],
+                    selected: action.selected ?? 0,
+                    client: inputClient
+                )
+            case "hide_candidates":
+                hideCandidates()
+            case "update_preedit", "commit", "clear":
+                assertionFailure("text actions must be handled before UI actions")
+            default:
+                NSLog("Unvalley IME: unknown action %@", action.type)
+            }
+        }
+        return forwarded
+    }
+
+    @discardableResult
+    private func synchronizeOptions(
+        force: Bool = false,
+        client inputClient: (any IMKTextInput & NSObjectProtocol)? = nil
+    ) -> Bool {
+        let options = InputRuntimeOptions(
+            liveConversion: IMEPreferences.liveConversion,
+            historyCompletion: IMEPreferences.historyCompletion,
+            historyLearning: IMEPreferences.historyLearning,
+            dictionaryPacks: IMEPreferences.dictionaryPacks,
+            secureEventInput: secureEventInputIsEnabled()
+        )
+        guard force || options != appliedOptions else {
+            return true
+        }
+
+        do {
+            let actions = try engine.setOptions(
+                liveConversion: options.liveConversion,
+                historyCompletion: options.historyCompletion,
+                historyLearning: options.historyLearning,
+                dictionaryPacks: options.dictionaryPacks
+            )
+            appliedOptions = options
+            if let inputClient {
+                _ = apply(actions, client: inputClient)
+            }
+            return true
+        } catch {
+            NSLog("Unvalley IME: failed to apply input options %@", String(describing: error))
             return false
         }
     }

@@ -64,6 +64,10 @@ bench-smoke:
 bench-build:
     cargo bench --workspace --no-run
 
+# AJIMEE-Benchでかな漢字変換の難例精度を評価する
+evaluate-ajimee *args:
+    scripts/evaluate-ajimee.sh {{args}}
+
 # CI相当の検証をローカルで実行する
 ci: check bench-build
 

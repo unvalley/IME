@@ -19,6 +19,7 @@ swiftc \
   -L "$workspace_dir/target/release" \
   -lime_ffi \
   "$workspace_dir/platforms/macos/Sources/RustEngine.swift" \
+  "$workspace_dir/platforms/macos/Sources/UserDataStore.swift" \
   "$workspace_dir/platforms/macos/Tests/AdapterPerformanceBenchmarks.swift" \
   -o "$benchmark_binary"
 

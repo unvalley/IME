@@ -62,44 +62,62 @@ pub struct Conversion {
     pub cost: i32,
 }
 
-#[derive(Clone, Debug)]
-pub struct Dictionary {
-    entries: Arc<[DictionaryEntry]>,
-    uses_connection_costs: bool,
+/// Assigns a final ordering cost to a complete conversion candidate.
+///
+/// The dictionary and connection matrix generate plausible paths first. A
+/// statistical language model can implement this trait later without changing
+/// the lattice search or the platform-facing candidate API. Lower costs rank
+/// first.
+pub trait CandidateRanker {
+    fn ranking_cost(&self, reading: &str, conversion: &Conversion) -> i32;
 }
 
-impl Dictionary {
+#[derive(Clone, Copy, Debug, Default)]
+pub struct CostOnlyRanker;
+
+impl CandidateRanker for CostOnlyRanker {
+    fn ranking_cost(&self, _reading: &str, conversion: &Conversion) -> i32 {
+        conversion.cost
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct DictionaryLayer {
+    id: String,
+    name: String,
+    entries: Arc<[DictionaryEntry]>,
+    max_reading_bytes: usize,
+}
+
+impl DictionaryLayer {
     #[must_use]
-    pub fn new(mut entries: Vec<DictionaryEntry>) -> Self {
-        entries.sort_unstable_by(|left, right| {
-            (
-                &left.reading,
-                left.word_cost,
-                &left.surface,
-                left.left_id,
-                left.right_id,
-            )
-                .cmp(&(
-                    &right.reading,
-                    right.word_cost,
-                    &right.surface,
-                    right.left_id,
-                    right.right_id,
-                ))
-        });
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        mut entries: Vec<DictionaryEntry>,
+    ) -> Self {
+        sort_entries(&mut entries);
+        let max_reading_bytes = entries
+            .iter()
+            .map(|entry| entry.reading.len())
+            .max()
+            .unwrap_or(0);
         Self {
+            id: id.into(),
+            name: name.into(),
             entries: entries.into(),
-            uses_connection_costs: false,
+            max_reading_bytes,
         }
     }
 
     #[must_use]
-    pub fn bundled() -> Self {
-        static ENTRIES: OnceLock<Arc<[DictionaryEntry]>> = OnceLock::new();
-        Self {
-            entries: Arc::clone(ENTRIES.get_or_init(|| parse_bundled_entries().into())),
-            uses_connection_costs: true,
-        }
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
     }
 
     #[must_use]
@@ -107,35 +125,177 @@ impl Dictionary {
         self.entries.len()
     }
 
+    fn from_sorted(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        entries: Arc<[DictionaryEntry]>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            max_reading_bytes: entries
+                .iter()
+                .map(|entry| entry.reading.len())
+                .max()
+                .unwrap_or(0),
+            entries,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct Dictionary {
+    layers: Arc<[DictionaryLayer]>,
+    uses_connection_costs: bool,
+    max_reading_bytes: usize,
+}
+
+macro_rules! for_each_exact_entry {
+    ($dictionary:expr, $reading:expr, $entry:ident, $body:block) => {{
+        if $dictionary.layers.len() == 1 {
+            for $entry in exact_entries_in_layer(&$dictionary.layers[0], $reading) $body
+        } else {
+            for layer in $dictionary.layers.iter() {
+                for $entry in exact_entries_in_layer(layer, $reading) $body
+            }
+        }
+    }};
+}
+
+macro_rules! for_each_prefix_end {
+    ($suffix:expr, $maximum:expr, $end:ident, $body:block) => {{
+        if $suffix.len() <= $maximum {
+            for $end in $suffix
+                .char_indices()
+                .skip(1)
+                .map(|(index, _)| index)
+                .chain(std::iter::once($suffix.len()))
+            $body
+        } else {
+            for $end in $suffix
+                .char_indices()
+                .skip(1)
+                .map(|(index, _)| index)
+                .chain(std::iter::once($suffix.len()))
+            {
+                if $end > $maximum {
+                    break;
+                }
+                $body
+            }
+        }
+    }};
+}
+
+impl Dictionary {
+    #[must_use]
+    pub fn new(entries: Vec<DictionaryEntry>) -> Self {
+        let layer = DictionaryLayer::new("default", "Default", entries);
+        Self {
+            max_reading_bytes: layer.max_reading_bytes,
+            layers: vec![layer].into(),
+            uses_connection_costs: false,
+        }
+    }
+
+    #[must_use]
+    pub fn bundled() -> Self {
+        static LAYERS: OnceLock<Arc<[DictionaryLayer]>> = OnceLock::new();
+        let layers = Arc::clone(LAYERS.get_or_init(|| {
+            vec![DictionaryLayer::from_sorted(
+                "basic",
+                "基本辞書",
+                parse_bundled_entries().into(),
+            )]
+            .into()
+        }));
+        Self {
+            max_reading_bytes: layers[0].max_reading_bytes,
+            layers,
+            uses_connection_costs: true,
+        }
+    }
+
+    #[must_use]
+    pub fn bundled_with_layers(additional_layers: Vec<DictionaryLayer>) -> Self {
+        let bundled = Self::bundled();
+        if additional_layers.is_empty() {
+            return bundled;
+        }
+        let mut layers = Vec::with_capacity(1 + additional_layers.len());
+        layers.extend(bundled.layers.iter().cloned());
+        layers.extend(additional_layers);
+        let max_reading_bytes = layers
+            .iter()
+            .map(|layer| layer.max_reading_bytes)
+            .max()
+            .unwrap_or(0);
+        Self {
+            layers: layers.into(),
+            uses_connection_costs: true,
+            max_reading_bytes,
+        }
+    }
+
+    #[must_use]
+    pub fn entry_count(&self) -> usize {
+        self.layers.iter().map(DictionaryLayer::entry_count).sum()
+    }
+
+    #[must_use]
+    pub fn layer_count(&self) -> usize {
+        self.layers.len()
+    }
+
     #[must_use]
     pub fn candidates(&self, reading: &str) -> Vec<Candidate> {
+        self.candidates_with_ranker(reading, DEFAULT_N_BEST, &CostOnlyRanker)
+    }
+
+    #[must_use]
+    pub fn candidates_with_ranker(
+        &self,
+        reading: &str,
+        limit: usize,
+        ranker: &dyn CandidateRanker,
+    ) -> Vec<Candidate> {
         let mut candidates = Vec::<Candidate>::new();
-        for entry in self.exact_entries(reading) {
+        let mut conversions = Vec::new();
+        for_each_exact_entry!(self, reading, entry, {
             let cost = if entry.surface == entry.reading {
-                LITERAL_COST
+                LITERAL_CANDIDATE_COST
             } else {
                 entry.word_cost
             };
+            conversions.push(Conversion {
+                surface: entry.surface.clone(),
+                segments: vec![Segment {
+                    reading: entry.reading.clone(),
+                    surface: entry.surface.clone(),
+                    cost,
+                }],
+                cost,
+            });
+        });
+        conversions.extend(self.convert_n_best(reading, limit));
+
+        for conversion in conversions {
+            let cost = if conversion.surface == reading {
+                LITERAL_CANDIDATE_COST
+            } else {
+                ranker.ranking_cost(reading, &conversion)
+            };
             if let Some(existing) = candidates
                 .iter_mut()
-                .find(|candidate| candidate.surface == entry.surface)
+                .find(|candidate| candidate.surface == conversion.surface)
             {
                 existing.cost = existing.cost.min(cost);
             } else {
                 candidates.push(Candidate {
-                    surface: entry.surface.clone(),
+                    surface: conversion.surface,
                     cost,
                 });
             }
-        }
-
-        if candidates.is_empty()
-            && let Some(best) = self.convert_best(reading)
-        {
-            candidates.push(Candidate {
-                surface: best.surface,
-                cost: best.cost,
-            });
         }
 
         if !candidates
@@ -144,12 +304,30 @@ impl Dictionary {
         {
             candidates.push(Candidate {
                 surface: reading.to_owned(),
-                cost: LITERAL_COST,
+                cost: LITERAL_CANDIDATE_COST,
             });
         }
 
         candidates.sort_unstable_by_key(|candidate| candidate.cost);
         candidates
+    }
+
+    /// Returns complete conversion paths ordered by their lattice cost.
+    ///
+    /// Unlike [`Self::convert_best`], this keeps multiple paths which arrive at
+    /// the same part-of-speech state. It is intentionally used only when the
+    /// candidate window is requested; live conversion stays on the optimized
+    /// one-best path.
+    #[must_use]
+    pub fn convert_n_best(&self, reading: &str, limit: usize) -> Vec<Conversion> {
+        if reading.is_empty() || limit == 0 {
+            return Vec::new();
+        }
+        if self.uses_connection_costs {
+            self.convert_n_best_connected(reading, limit)
+        } else {
+            self.convert_n_best_heuristic(reading, limit)
+        }
     }
 
     #[must_use]
@@ -180,14 +358,9 @@ impl Dictionary {
             }
 
             let suffix = &reading[start..];
-            for relative_end in suffix
-                .char_indices()
-                .skip(1)
-                .map(|(index, _)| index)
-                .chain(std::iter::once(suffix.len()))
-            {
+            for_each_prefix_end!(suffix, self.max_reading_bytes(), relative_end, {
                 let prefix = &suffix[..relative_end];
-                for entry in self.exact_entries(prefix) {
+                for_each_exact_entry!(self, prefix, entry, {
                     let is_literal = entry.surface == entry.reading;
                     if is_literal && !is_grammar_literal(prefix) {
                         continue;
@@ -206,8 +379,8 @@ impl Dictionary {
                         &entry.surface,
                         segment_cost,
                     );
-                }
-            }
+                });
+            });
 
             let Some(character) = suffix.chars().next() else {
                 continue;
@@ -278,14 +451,9 @@ impl Dictionary {
             predecessor_cache.clear();
 
             let suffix = &reading[start..];
-            for relative_end in suffix
-                .char_indices()
-                .skip(1)
-                .map(|(index, _)| index)
-                .chain(std::iter::once(suffix.len()))
-            {
+            for_each_prefix_end!(suffix, self.max_reading_bytes(), relative_end, {
                 let prefix = &suffix[..relative_end];
-                for entry in self.exact_entries(prefix) {
+                for_each_exact_entry!(self, prefix, entry, {
                     let Some((predecessor_cost, predecessor)) = cached_connected_predecessor(
                         &lattice,
                         start,
@@ -308,8 +476,8 @@ impl Dictionary {
                             total_cost,
                         },
                     );
-                }
-            }
+                });
+            });
 
             let character = suffix.chars().next()?;
             let end = start + character.len_utf8();
@@ -340,15 +508,213 @@ impl Dictionary {
         reconstruct_connected_conversion(&lattice, reading.len(), connection)
     }
 
-    fn exact_entries(&self, reading: &str) -> &[DictionaryEntry] {
-        let start = self
-            .entries
-            .partition_point(|entry| entry.reading.as_str() < reading);
-        let end = self
-            .entries
-            .partition_point(|entry| entry.reading.as_str() <= reading);
-        &self.entries[start..end]
+    fn convert_n_best_connected(&self, reading: &str, limit: usize) -> Vec<Conversion> {
+        let connection = ConnectionMatrix::bundled();
+        let mut arena = Vec::<NBestNode<'_>>::new();
+        let mut lattice: Vec<Vec<usize>> = (0..=reading.len()).map(|_| Vec::new()).collect();
+
+        for start in reading
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(reading.len()))
+        {
+            if start == reading.len() || (start > 0 && lattice[start].is_empty()) {
+                continue;
+            }
+            let predecessors = lattice[start].clone();
+            let suffix = &reading[start..];
+
+            for_each_prefix_end!(suffix, self.max_reading_bytes(), relative_end, {
+                let prefix = &suffix[..relative_end];
+                for_each_exact_entry!(self, prefix, entry, {
+                    if start == 0 {
+                        let total_cost = connection
+                            .cost(BOS_EOS_POS_ID, entry.left_id)
+                            .saturating_add(entry.word_cost);
+                        insert_n_best_node(
+                            &mut arena,
+                            &mut lattice[start + relative_end],
+                            NBestNode {
+                                start,
+                                predecessor: None,
+                                reading: &entry.reading,
+                                surface: &entry.surface,
+                                segment_cost: entry.word_cost,
+                                right_id: entry.right_id,
+                                total_cost,
+                            },
+                            limit,
+                        );
+                    } else {
+                        for &predecessor in &predecessors {
+                            let previous = &arena[predecessor];
+                            let total_cost = previous
+                                .total_cost
+                                .saturating_add(connection.cost(previous.right_id, entry.left_id))
+                                .saturating_add(entry.word_cost);
+                            insert_n_best_node(
+                                &mut arena,
+                                &mut lattice[start + relative_end],
+                                NBestNode {
+                                    start,
+                                    predecessor: Some(predecessor),
+                                    reading: &entry.reading,
+                                    surface: &entry.surface,
+                                    segment_cost: entry.word_cost,
+                                    right_id: entry.right_id,
+                                    total_cost,
+                                },
+                                limit,
+                            );
+                        }
+                    }
+                });
+            });
+
+            insert_connected_unknown(
+                reading,
+                start,
+                &predecessors,
+                &mut arena,
+                &mut lattice,
+                connection,
+                limit,
+            );
+        }
+
+        let mut completed: Vec<_> = lattice[reading.len()]
+            .iter()
+            .map(|&node| {
+                (
+                    node,
+                    arena[node]
+                        .total_cost
+                        .saturating_add(connection.cost(arena[node].right_id, BOS_EOS_POS_ID)),
+                )
+            })
+            .collect();
+        completed.sort_unstable_by_key(|(_, cost)| *cost);
+        reconstruct_n_best_conversions(&arena, &completed, limit)
     }
+
+    fn convert_n_best_heuristic(&self, reading: &str, limit: usize) -> Vec<Conversion> {
+        let mut arena = Vec::<NBestNode<'_>>::new();
+        let mut lattice: Vec<Vec<usize>> = (0..=reading.len()).map(|_| Vec::new()).collect();
+
+        for start in reading
+            .char_indices()
+            .map(|(index, _)| index)
+            .chain(std::iter::once(reading.len()))
+        {
+            if start == reading.len() || (start > 0 && lattice[start].is_empty()) {
+                continue;
+            }
+            let predecessors = lattice[start].clone();
+            let suffix = &reading[start..];
+
+            for_each_prefix_end!(suffix, self.max_reading_bytes(), relative_end, {
+                let prefix = &suffix[..relative_end];
+                for_each_exact_entry!(self, prefix, entry, {
+                    let is_literal = entry.surface == entry.reading;
+                    if is_literal && !is_grammar_literal(prefix) {
+                        continue;
+                    }
+                    let segment_cost = if is_literal { 0 } else { entry.word_cost }
+                        .saturating_add(SEGMENT_PENALTY);
+                    if start == 0 {
+                        insert_n_best_node(
+                            &mut arena,
+                            &mut lattice[start + relative_end],
+                            NBestNode {
+                                start,
+                                predecessor: None,
+                                reading: &entry.reading,
+                                surface: &entry.surface,
+                                segment_cost,
+                                right_id: 0,
+                                total_cost: segment_cost,
+                            },
+                            limit,
+                        );
+                    } else {
+                        for &predecessor in &predecessors {
+                            let total_cost =
+                                arena[predecessor].total_cost.saturating_add(segment_cost);
+                            insert_n_best_node(
+                                &mut arena,
+                                &mut lattice[start + relative_end],
+                                NBestNode {
+                                    start,
+                                    predecessor: Some(predecessor),
+                                    reading: &entry.reading,
+                                    surface: &entry.surface,
+                                    segment_cost,
+                                    right_id: 0,
+                                    total_cost,
+                                },
+                                limit,
+                            );
+                        }
+                    }
+                });
+            });
+
+            insert_heuristic_unknown(
+                reading,
+                start,
+                &predecessors,
+                &mut arena,
+                &mut lattice,
+                limit,
+            );
+        }
+
+        let mut completed: Vec<_> = lattice[reading.len()]
+            .iter()
+            .map(|&node| (node, arena[node].total_cost))
+            .collect();
+        completed.sort_unstable_by_key(|(_, cost)| *cost);
+        reconstruct_n_best_conversions(&arena, &completed, limit)
+    }
+
+    fn max_reading_bytes(&self) -> usize {
+        self.max_reading_bytes
+    }
+}
+
+fn exact_entries_in_layer<'a>(
+    layer: &'a DictionaryLayer,
+    reading: &str,
+) -> std::slice::Iter<'a, DictionaryEntry> {
+    if reading.len() > layer.max_reading_bytes {
+        return layer.entries[0..0].iter();
+    }
+    let start = layer
+        .entries
+        .partition_point(|entry| entry.reading.as_str() < reading);
+    let end = layer
+        .entries
+        .partition_point(|entry| entry.reading.as_str() <= reading);
+    layer.entries[start..end].iter()
+}
+
+fn sort_entries(entries: &mut [DictionaryEntry]) {
+    entries.sort_unstable_by(|left, right| {
+        (
+            &left.reading,
+            left.word_cost,
+            &left.surface,
+            left.left_id,
+            left.right_id,
+        )
+            .cmp(&(
+                &right.reading,
+                right.word_cost,
+                &right.surface,
+                right.left_id,
+                right.right_id,
+            ))
+    });
 }
 
 fn reconstruct_connected_conversion(
@@ -419,6 +785,229 @@ struct LatticeNode<'a> {
     segment_cost: i32,
     right_id: u16,
     total_cost: i32,
+}
+
+#[derive(Clone, Debug)]
+struct NBestNode<'a> {
+    start: usize,
+    predecessor: Option<usize>,
+    reading: &'a str,
+    surface: &'a str,
+    segment_cost: i32,
+    right_id: u16,
+    total_cost: i32,
+}
+
+fn insert_connected_unknown<'a>(
+    reading: &'a str,
+    start: usize,
+    predecessors: &[usize],
+    arena: &mut Vec<NBestNode<'a>>,
+    lattice: &mut [Vec<usize>],
+    connection: ConnectionMatrix,
+    limit: usize,
+) {
+    let Some(character) = reading[start..].chars().next() else {
+        return;
+    };
+    let end = start + character.len_utf8();
+    let literal = &reading[start..end];
+    if start == 0 {
+        let total_cost = connection
+            .cost(BOS_EOS_POS_ID, UNKNOWN_POS_ID)
+            .saturating_add(UNKNOWN_COST);
+        insert_n_best_node(
+            arena,
+            &mut lattice[end],
+            NBestNode {
+                start,
+                predecessor: None,
+                reading: literal,
+                surface: literal,
+                segment_cost: UNKNOWN_COST,
+                right_id: UNKNOWN_POS_ID,
+                total_cost,
+            },
+            limit,
+        );
+        return;
+    }
+
+    for &predecessor in predecessors {
+        let previous = &arena[predecessor];
+        let total_cost = previous
+            .total_cost
+            .saturating_add(connection.cost(previous.right_id, UNKNOWN_POS_ID))
+            .saturating_add(UNKNOWN_COST);
+        insert_n_best_node(
+            arena,
+            &mut lattice[end],
+            NBestNode {
+                start,
+                predecessor: Some(predecessor),
+                reading: literal,
+                surface: literal,
+                segment_cost: UNKNOWN_COST,
+                right_id: UNKNOWN_POS_ID,
+                total_cost,
+            },
+            limit,
+        );
+    }
+}
+
+fn insert_heuristic_unknown<'a>(
+    reading: &'a str,
+    start: usize,
+    predecessors: &[usize],
+    arena: &mut Vec<NBestNode<'a>>,
+    lattice: &mut [Vec<usize>],
+    limit: usize,
+) {
+    let Some(character) = reading[start..].chars().next() else {
+        return;
+    };
+    let end = start + character.len_utf8();
+    let literal = &reading[start..end];
+    if start == 0 {
+        insert_n_best_node(
+            arena,
+            &mut lattice[end],
+            NBestNode {
+                start,
+                predecessor: None,
+                reading: literal,
+                surface: literal,
+                segment_cost: UNKNOWN_COST,
+                right_id: 0,
+                total_cost: UNKNOWN_COST,
+            },
+            limit,
+        );
+        return;
+    }
+
+    for &predecessor in predecessors {
+        let total_cost = arena[predecessor].total_cost.saturating_add(UNKNOWN_COST);
+        insert_n_best_node(
+            arena,
+            &mut lattice[end],
+            NBestNode {
+                start,
+                predecessor: Some(predecessor),
+                reading: literal,
+                surface: literal,
+                segment_cost: UNKNOWN_COST,
+                right_id: 0,
+                total_cost,
+            },
+            limit,
+        );
+    }
+}
+
+fn insert_n_best_node<'a>(
+    arena: &mut Vec<NBestNode<'a>>,
+    states: &mut Vec<usize>,
+    candidate: NBestNode<'a>,
+    limit_per_state: usize,
+) {
+    if let Some((position, &existing_index)) = states.iter().enumerate().find(|(_, index)| {
+        let existing = &arena[**index];
+        existing.right_id == candidate.right_id
+            && existing.start == candidate.start
+            && existing.predecessor == candidate.predecessor
+            && existing.reading == candidate.reading
+            && existing.surface == candidate.surface
+    }) {
+        if candidate.total_cost < arena[existing_index].total_cost {
+            let index = arena.len();
+            arena.push(candidate);
+            states[position] = index;
+        }
+        return;
+    }
+
+    let same_state_count = states
+        .iter()
+        .filter(|&&index| arena[index].right_id == candidate.right_id)
+        .count();
+    if same_state_count < limit_per_state {
+        let index = arena.len();
+        arena.push(candidate);
+        states.push(index);
+        prune_n_best_states(arena, states, limit_per_state);
+        return;
+    }
+
+    let Some((worst_position, &worst_index)) = states
+        .iter()
+        .enumerate()
+        .filter(|(_, index)| arena[**index].right_id == candidate.right_id)
+        .max_by_key(|(_, index)| arena[**index].total_cost)
+    else {
+        return;
+    };
+    if candidate.total_cost < arena[worst_index].total_cost {
+        let index = arena.len();
+        arena.push(candidate);
+        states[worst_position] = index;
+    }
+}
+
+fn prune_n_best_states(arena: &[NBestNode<'_>], states: &mut Vec<usize>, limit: usize) {
+    let beam_size = limit.saturating_mul(N_BEST_BEAM_FACTOR);
+    if states.len() <= beam_size {
+        return;
+    }
+    if let Some((position, _)) = states
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, index)| arena[**index].total_cost)
+    {
+        states.swap_remove(position);
+    }
+}
+
+fn reconstruct_n_best_conversions(
+    arena: &[NBestNode<'_>],
+    completed: &[(usize, i32)],
+    limit: usize,
+) -> Vec<Conversion> {
+    let mut conversions = Vec::with_capacity(limit);
+    for &(last_node, total_cost) in completed {
+        let mut reversed = Vec::new();
+        let mut cursor = Some(last_node);
+        while let Some(index) = cursor {
+            let node = &arena[index];
+            reversed.push(Segment {
+                reading: node.reading.to_owned(),
+                surface: node.surface.to_owned(),
+                cost: node.segment_cost,
+            });
+            cursor = node.predecessor;
+        }
+        reversed.reverse();
+        let surface = reversed
+            .iter()
+            .map(|segment| segment.surface.as_str())
+            .collect();
+        if conversions
+            .iter()
+            .any(|conversion: &Conversion| conversion.surface == surface)
+        {
+            continue;
+        }
+        conversions.push(Conversion {
+            surface,
+            segments: reversed,
+            cost: total_cost,
+        });
+        if conversions.len() == limit {
+            break;
+        }
+    }
+    conversions
 }
 
 fn best_connected_predecessor(
@@ -574,8 +1163,10 @@ fn update_path(
 }
 
 const UNKNOWN_COST: i32 = 10_000;
-const LITERAL_COST: i32 = 20_000;
+const LITERAL_CANDIDATE_COST: i32 = i32::MAX;
 const SEGMENT_PENALTY: i32 = 1_000;
+const DEFAULT_N_BEST: usize = 10;
+const N_BEST_BEAM_FACTOR: usize = 8;
 const CONNECTION_COST_RESOLUTION: i32 = 64;
 const INVALID_CONNECTION_COST: i32 = 30_000;
 const BOS_EOS_POS_ID: u16 = 0;
@@ -656,6 +1247,13 @@ fn parse_bundled_entries() -> Vec<DictionaryEntry> {
         680,
         500,
     ));
+    entries.push(DictionaryEntry::with_pos(
+        "はしでたべる",
+        "箸で食べる",
+        1851,
+        680,
+        500,
+    ));
     entries.sort_unstable_by(|left, right| left.reading.cmp(&right.reading));
     entries
 }
@@ -671,7 +1269,21 @@ fn preferred_basic_cost(reading: &str, surface: &str) -> Option<i32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dictionary, DictionaryEntry};
+    use super::{
+        CandidateRanker, Conversion, Dictionary, DictionaryEntry, DictionaryLayer, UNKNOWN_POS_ID,
+    };
+
+    struct PreferSurface<'a>(&'a str);
+
+    impl CandidateRanker for PreferSurface<'_> {
+        fn ranking_cost(&self, _reading: &str, conversion: &Conversion) -> i32 {
+            if conversion.surface == self.0 {
+                i32::MIN
+            } else {
+                conversion.cost
+            }
+        }
+    }
 
     #[test]
     fn exact_candidates_are_ordered_by_cost() {
@@ -681,7 +1293,16 @@ mod tests {
         assert_eq!(candidates[0].surface, "日本");
         assert_eq!(candidates[1].surface, "ニホン");
         assert_eq!(candidates[2].surface, "二本");
-        assert_eq!(candidates[3].surface, "にほん");
+        assert_eq!(candidates.last().unwrap().surface, "にほん");
+    }
+
+    #[test]
+    fn unconverted_reading_stays_after_long_conversion_paths() {
+        let dictionary = Dictionary::bundled();
+        let candidates = dictionary.candidates("わたしはにほん");
+
+        assert_eq!(candidates[0].surface, "私は日本");
+        assert_eq!(candidates.last().unwrap().surface, "わたしはにほん");
     }
 
     #[test]
@@ -694,12 +1315,58 @@ mod tests {
     }
 
     #[test]
+    fn phrase_entry_resolves_semantically_ambiguous_noun() {
+        let dictionary = Dictionary::bundled();
+
+        assert_eq!(
+            dictionary.convert_best("はしでたべる").unwrap().surface,
+            "箸で食べる"
+        );
+    }
+
+    #[test]
+    fn n_best_keeps_semantically_ambiguous_segmented_paths() {
+        let dictionary = Dictionary::bundled();
+        let conversions = dictionary.convert_n_best("はしでたべる", 10);
+        let surfaces: Vec<_> = conversions
+            .iter()
+            .map(|conversion| conversion.surface.as_str())
+            .collect();
+
+        assert!(surfaces.contains(&"橋で食べる"), "surfaces: {surfaces:?}");
+        assert!(surfaces.contains(&"箸で食べる"), "surfaces: {surfaces:?}");
+    }
+
+    #[test]
+    fn candidate_ranker_can_reorder_complete_n_best_paths() {
+        let dictionary = Dictionary::new(vec![
+            DictionaryEntry::new("あ", "亜", 10),
+            DictionaryEntry::new("あ", "阿", 20),
+            DictionaryEntry::new("い", "伊", 10),
+        ]);
+
+        let candidates = dictionary.candidates_with_ranker("あい", 5, &PreferSurface("阿伊"));
+
+        assert_eq!(candidates[0].surface, "阿伊");
+    }
+
+    #[test]
     fn unknown_input_falls_back_without_data_loss() {
         let dictionary = Dictionary::bundled();
         let conversion = dictionary.convert_best("ゑゑ").unwrap();
 
         assert_eq!(conversion.surface, "ゑゑ");
         assert_eq!(conversion.segments.len(), 2);
+    }
+
+    #[test]
+    fn input_longer_than_every_dictionary_entry_still_falls_back_losslessly() {
+        let dictionary = Dictionary::bundled();
+        let reading = "ゑ".repeat(100);
+        let conversion = dictionary.convert_best(&reading).unwrap();
+
+        assert_eq!(conversion.surface, reading);
+        assert_eq!(conversion.segments.len(), 100);
     }
 
     #[test]
@@ -747,5 +1414,31 @@ mod tests {
         }
 
         assert_eq!(dictionary.candidates("かんじ")[0].surface, "漢字");
+    }
+
+    #[test]
+    fn additional_dictionary_layers_participate_in_exact_and_phrase_conversion() {
+        let layer = DictionaryLayer::new(
+            "technology",
+            "技術用語",
+            vec![DictionaryEntry::with_pos(
+                "らすとげんご",
+                "Rust言語",
+                UNKNOWN_POS_ID,
+                UNKNOWN_POS_ID,
+                500,
+            )],
+        );
+        let dictionary = Dictionary::bundled_with_layers(vec![layer]);
+
+        assert_eq!(dictionary.layer_count(), 2);
+        assert_eq!(dictionary.candidates("らすとげんご")[0].surface, "Rust言語");
+        assert_eq!(
+            dictionary
+                .convert_best("らすとげんごをつかう")
+                .unwrap()
+                .surface,
+            "Rust言語を使う"
+        );
     }
 }

@@ -10,6 +10,7 @@ final class RustEngine {
         case nextCandidate
         case previousCandidate
         case selectCandidate(UInt32)
+        case acceptCandidate
 
         fileprivate var rawValue: UInt32 {
             switch self {
@@ -21,6 +22,7 @@ final class RustEngine {
             case .nextCandidate: 5
             case .previousCandidate: 6
             case .selectCandidate: 7
+            case .acceptCandidate: 8
             }
         }
 
@@ -54,8 +56,12 @@ final class RustEngine {
 
     private let handle: OpaquePointer
 
-    init() throws {
-        guard let handle = ime_create() else {
+    init(dataDirectory: URL = UserDataStore.shared.directoryURL) throws {
+        let path = Array(dataDirectory.path.utf8)
+        let createdHandle = path.withUnsafeBufferPointer { buffer in
+            ime_create_with_data_dir(buffer.baseAddress, buffer.count)
+        }
+        guard let handle = createdHandle else {
             throw EngineError.creationFailed
         }
         self.handle = handle
@@ -67,6 +73,31 @@ final class RustEngine {
 
     func process(_ event: Event) throws -> [Action] {
         let buffer = ime_process(handle, event.rawValue, event.scalar)
+        return try decode(buffer)
+    }
+
+    func setOptions(
+        liveConversion: Bool,
+        historyCompletion: Bool,
+        historyLearning: Bool? = nil,
+        dictionaryPacks: UInt32 = 0
+    ) throws -> [Action] {
+        let buffer = ime_set_options_v3(
+            handle,
+            liveConversion,
+            historyCompletion,
+            historyLearning ?? historyCompletion,
+            dictionaryPacks
+        )
+        return try decode(buffer)
+    }
+
+    func reloadUserData() throws -> [Action] {
+        let buffer = ime_reload_user_data(handle)
+        return try decode(buffer)
+    }
+
+    private func decode(_ buffer: ImeBuffer) throws -> [Action] {
         defer { ime_buffer_destroy(buffer) }
 
         guard let bytes = buffer.data, buffer.len > 0 else {

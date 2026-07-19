@@ -43,13 +43,19 @@ swiftc \
   -import-objc-header "$workspace_dir/crates/ime-ffi/include/ime_ffi.h" \
   -framework AppKit \
   -framework InputMethodKit \
+  -framework SwiftUI \
   -L "$workspace_dir/target/release" \
   -lime_ffi \
   -Xlinker -rpath \
   -Xlinker @executable_path/../Frameworks \
   "$workspace_dir/platforms/macos/Sources/RustEngine.swift" \
+  "$workspace_dir/platforms/macos/Sources/UserDataStore.swift" \
+  "$workspace_dir/platforms/macos/Sources/DictionaryImporter.swift" \
+  "$workspace_dir/platforms/macos/Sources/InputPrivacy.swift" \
   "$workspace_dir/platforms/macos/Sources/KeyEventMapping.swift" \
+  "$workspace_dir/platforms/macos/Sources/TextClientActions.swift" \
   "$workspace_dir/platforms/macos/Sources/CandidatePanel.swift" \
+  "$workspace_dir/platforms/macos/Sources/SettingsWindow.swift" \
   "$workspace_dir/platforms/macos/Sources/InputController.swift" \
   "$workspace_dir/platforms/macos/Sources/main.swift" \
   -o "$executable"
