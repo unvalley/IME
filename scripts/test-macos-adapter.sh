@@ -19,6 +19,7 @@ swiftc \
   -lime_ffi \
   "$workspace_dir/platforms/macos/Sources/RustEngine.swift" \
   "$workspace_dir/platforms/macos/Sources/KeyEventMapping.swift" \
+  "$workspace_dir/platforms/macos/Sources/CandidatePanel.swift" \
   "$workspace_dir/platforms/macos/Tests/AdapterTests.swift" \
   -o "$test_binary"
 

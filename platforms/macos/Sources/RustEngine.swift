@@ -9,6 +9,7 @@ final class RustEngine {
         case backspace
         case nextCandidate
         case previousCandidate
+        case selectCandidate(UInt32)
 
         fileprivate var rawValue: UInt32 {
             switch self {
@@ -19,12 +20,16 @@ final class RustEngine {
             case .backspace: 4
             case .nextCandidate: 5
             case .previousCandidate: 6
+            case .selectCandidate: 7
             }
         }
 
         fileprivate var scalar: UInt32 {
-            guard case let .character(value) = self else { return 0 }
-            return value.value
+            switch self {
+            case let .character(value): value.value
+            case let .selectCandidate(index): index
+            default: 0
+            }
         }
     }
 

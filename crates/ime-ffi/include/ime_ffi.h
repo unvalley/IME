@@ -24,11 +24,12 @@ enum ImeEventKind {
   IME_EVENT_BACKSPACE = 4,
   IME_EVENT_NEXT_CANDIDATE = 5,
   IME_EVENT_PREVIOUS_CANDIDATE = 6,
+  IME_EVENT_SELECT_CANDIDATE = 7,
 };
 
 ImeHandle *ime_create(void);
 void ime_destroy(ImeHandle *handle);
-ImeBuffer ime_process(ImeHandle *handle, uint32_t event_kind, uint32_t scalar);
+ImeBuffer ime_process(ImeHandle *handle, uint32_t event_kind, uint32_t value);
 void ime_buffer_destroy(ImeBuffer buffer);
 
 #ifdef __cplusplus
@@ -36,4 +37,3 @@ void ime_buffer_destroy(ImeBuffer buffer);
 #endif
 
 #endif
-

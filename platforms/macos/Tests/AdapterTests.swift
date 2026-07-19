@@ -16,9 +16,19 @@ enum AdapterTests {
         let candidateAction = conversion.first(where: { $0.type == "show_candidates" })
         try expect(candidateAction?.candidates?.contains("日本") == true, "日本 should be a candidate")
 
+        let candidates = try expectValue(candidateAction?.candidates, "candidate list should be present")
+        let selectedCandidate = candidates[1]
+        let selection = try engine.process(.selectCandidate(1))
+        try expect(
+            selection.contains(where: {
+                $0.type == "update_preedit" && $0.text == selectedCandidate
+            }),
+            "candidate selection should update the preedit"
+        )
+
         let commit = try engine.process(.enter)
         try expect(
-            commit.contains(where: { $0.type == "commit" && $0.text == "日本" }),
+            commit.contains(where: { $0.type == "commit" && $0.text == selectedCandidate }),
             "selected candidate should be committed"
         )
 
@@ -82,6 +92,50 @@ enum AdapterTests {
         try expect(
             !shouldForwardBackspaceDirectly(keyCode: 117, hasComposition: false),
             "forward Delete should keep its separate routing"
+        )
+
+        try expect(
+            candidateSelectionIndex(keyCode: 49, candidateCount: 4, pageStart: 0) == nil,
+            "Space should remain a conversion key while candidates are visible"
+        )
+        try expect(
+            candidateSelectionIndex(keyCode: 18, candidateCount: 4, pageStart: 0) == 0,
+            "number keys should resolve to candidate indices"
+        )
+        try expect(
+            candidateSelectionIndex(keyCode: 21, candidateCount: 4, pageStart: 0) == 3,
+            "number selection should respect the available candidates"
+        )
+        try expect(
+            candidateSelectionIndex(keyCode: 23, candidateCount: 4, pageStart: 0) == nil,
+            "out-of-range number keys should remain normal input"
+        )
+        try expect(
+            candidateSelectionIndex(keyCode: 18, candidateCount: 12, pageStart: 9) == 9,
+            "number keys should select from the visible candidate page"
+        )
+
+        let visibleFrame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        let panelAboveInput = candidatePanelFrame(
+            anchor: NSRect(x: 300, y: 12, width: 0, height: 20),
+            preferredWidth: 112,
+            visibleCount: 3,
+            visibleFrame: visibleFrame
+        )
+        try expect(
+            panelAboveInput.minY == 36,
+            "candidate panel should move above input near the bottom screen edge"
+        )
+
+        let panelBelowInput = candidatePanelFrame(
+            anchor: NSRect(x: 300, y: 400, width: 0, height: 20),
+            preferredWidth: 112,
+            visibleCount: 3,
+            visibleFrame: visibleFrame
+        )
+        try expect(
+            panelBelowInput.maxY == 396,
+            "candidate panel should remain below input when there is enough space"
         )
 
         print("macOS Swift adapter tests passed")

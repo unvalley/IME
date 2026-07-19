@@ -16,6 +16,7 @@ pub const EVENT_ESCAPE: u32 = 3;
 pub const EVENT_BACKSPACE: u32 = 4;
 pub const EVENT_NEXT_CANDIDATE: u32 = 5;
 pub const EVENT_PREVIOUS_CANDIDATE: u32 = 6;
+pub const EVENT_SELECT_CANDIDATE: u32 = 7;
 
 pub struct ImeHandle {
     engine: ImeEngine,
@@ -68,8 +69,9 @@ pub unsafe extern "C" fn ime_destroy(handle: *mut ImeHandle) {
 
 /// Processes one input event and returns a UTF-8 JSON action list.
 ///
-/// `scalar` is used only for [`EVENT_CHARACTER`] and must be a valid Unicode
-/// scalar value. The returned buffer must be released with [`ime_buffer_destroy`].
+/// `value` is a Unicode scalar for [`EVENT_CHARACTER`] and a zero-based index
+/// for [`EVENT_SELECT_CANDIDATE`]. It is ignored for other events. The returned
+/// buffer must be released with [`ime_buffer_destroy`].
 ///
 /// # Safety
 ///
@@ -79,14 +81,14 @@ pub unsafe extern "C" fn ime_destroy(handle: *mut ImeHandle) {
 pub unsafe extern "C" fn ime_process(
     handle: *mut ImeHandle,
     event_kind: u32,
-    scalar: u32,
+    value: u32,
 ) -> ImeBuffer {
     let result = catch_unwind(AssertUnwindSafe(|| {
         if handle.is_null() {
             return error_response("null_handle");
         }
 
-        let event = match decode_event(event_kind, scalar) {
+        let event = match decode_event(event_kind, value) {
             Ok(event) => event,
             Err(error) => return error_response(error),
         };
@@ -119,9 +121,9 @@ pub unsafe extern "C" fn ime_buffer_destroy(buffer: ImeBuffer) {
     drop(unsafe { Vec::from_raw_parts(buffer.data, buffer.len, buffer.capacity) });
 }
 
-fn decode_event(event_kind: u32, scalar: u32) -> Result<InputEvent, &'static str> {
+fn decode_event(event_kind: u32, value: u32) -> Result<InputEvent, &'static str> {
     match event_kind {
-        EVENT_CHARACTER => char::from_u32(scalar)
+        EVENT_CHARACTER => char::from_u32(value)
             .map(InputEvent::Character)
             .ok_or("invalid_unicode_scalar"),
         EVENT_SPACE => Ok(InputEvent::Space),
@@ -130,6 +132,7 @@ fn decode_event(event_kind: u32, scalar: u32) -> Result<InputEvent, &'static str
         EVENT_BACKSPACE => Ok(InputEvent::Backspace),
         EVENT_NEXT_CANDIDATE => Ok(InputEvent::NextCandidate),
         EVENT_PREVIOUS_CANDIDATE => Ok(InputEvent::PreviousCandidate),
+        EVENT_SELECT_CANDIDATE => Ok(InputEvent::SelectCandidate(value)),
         _ => Err("invalid_event_kind"),
     }
 }

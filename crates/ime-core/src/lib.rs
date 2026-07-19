@@ -12,6 +12,7 @@ pub enum InputEvent {
     Backspace,
     NextCandidate,
     PreviousCandidate,
+    SelectCandidate(u32),
 }
 
 const _: () = assert!(std::mem::size_of::<InputEvent>() <= 8);
@@ -93,6 +94,7 @@ impl ImeEngine {
             InputEvent::Character(character) => self.handle_character(character),
             InputEvent::Space | InputEvent::NextCandidate => self.next_or_convert(),
             InputEvent::PreviousCandidate => self.previous_candidate(),
+            InputEvent::SelectCandidate(index) => self.select_candidate(index),
             InputEvent::Enter => self.commit(),
             InputEvent::Escape => self.cancel(),
             InputEvent::Backspace => self.backspace(),
@@ -153,6 +155,18 @@ impl ImeEngine {
             .checked_sub(1)
             .unwrap_or(self.candidates.len() - 1);
         self.candidate_actions()
+    }
+
+    fn select_candidate(&mut self, index: u32) -> Vec<ImeAction> {
+        let index = index as usize;
+        if index >= self.candidates.len() {
+            return Vec::new();
+        }
+
+        self.selected = index;
+        vec![ImeAction::UpdatePreedit(
+            self.selected_candidate().to_owned(),
+        )]
     }
 
     fn candidate_actions(&self) -> Vec<ImeAction> {
@@ -335,6 +349,41 @@ mod tests {
 
         engine.handle(InputEvent::Space);
         assert_eq!(engine.snapshot().preedit, "ニホン");
+    }
+
+    #[test]
+    fn selecting_candidate_by_index_updates_preedit_and_commit() {
+        let mut engine = ImeEngine::bundled();
+        type_text(&mut engine, "nihon");
+        engine.handle(InputEvent::Space);
+
+        let candidates = engine.snapshot().candidates;
+        let selected = candidates[1].clone();
+        let actions = engine.handle(InputEvent::SelectCandidate(1));
+
+        assert_eq!(actions, vec![ImeAction::UpdatePreedit(selected.clone())]);
+        assert_eq!(engine.snapshot().selected, Some(1));
+        assert!(
+            engine
+                .handle(InputEvent::Enter)
+                .contains(&ImeAction::Commit(selected))
+        );
+    }
+
+    #[test]
+    fn selecting_out_of_range_candidate_does_nothing() {
+        let mut engine = ImeEngine::bundled();
+        type_text(&mut engine, "nihon");
+        engine.handle(InputEvent::Space);
+
+        let snapshot = engine.snapshot();
+
+        assert!(
+            engine
+                .handle(InputEvent::SelectCandidate(u32::MAX))
+                .is_empty()
+        );
+        assert_eq!(engine.snapshot(), snapshot);
     }
 
     #[test]

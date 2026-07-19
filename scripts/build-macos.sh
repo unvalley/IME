@@ -49,6 +49,7 @@ swiftc \
   -Xlinker @executable_path/../Frameworks \
   "$workspace_dir/platforms/macos/Sources/RustEngine.swift" \
   "$workspace_dir/platforms/macos/Sources/KeyEventMapping.swift" \
+  "$workspace_dir/platforms/macos/Sources/CandidatePanel.swift" \
   "$workspace_dir/platforms/macos/Sources/InputController.swift" \
   "$workspace_dir/platforms/macos/Sources/main.swift" \
   -o "$executable"

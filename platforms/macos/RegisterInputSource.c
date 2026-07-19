@@ -152,7 +152,8 @@ int main(int argc, const char *argv[]) {
   for (CFIndex index = 0; index < count; index++) {
     TISInputSourceRef source =
         (TISInputSourceRef)CFArrayGetValueAtIndex(sources, index);
-    if (boolean_property(source, kTISPropertyInputSourceIsEnableCapable)) {
+    if (boolean_property(source, kTISPropertyInputSourceIsEnableCapable) &&
+        !boolean_property(source, kTISPropertyInputSourceIsEnabled)) {
       OSStatus status = TISEnableInputSource(source);
       if (status != noErr) {
         fprintf(stderr, "TISEnableInputSource failed: %d\n", status);
