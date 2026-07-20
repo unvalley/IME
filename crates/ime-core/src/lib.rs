@@ -621,6 +621,10 @@ fn normalize_ascii_character(character: char) -> char {
         '~' => '〜',
         ',' => '、',
         '.' => '。',
+        // Every mainstream Japanese IME (Kotoeri, Mozc, ATOK) types the middle
+        // dot here; it has no other key on US layouts, while ／ stays
+        // reachable through conversion candidates or ABC mode.
+        '/' => '・',
         '[' => '「',
         ']' => '」',
         character @ '!'..='~' => char::from_u32(u32::from(character) + 0xFEE0)
@@ -728,7 +732,7 @@ mod tests {
 
         assert_eq!(
             engine.snapshot().preedit,
-            "１２３、。！？（）「」＋ー〜／＠＃＇"
+            "１２３、。！？（）「」＋ー〜・＠＃＇"
         );
     }
 
