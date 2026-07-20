@@ -64,9 +64,17 @@ bench-smoke:
 bench-build:
     cargo bench --workspace --no-run
 
-# AJIMEE-Benchでかな漢字変換の難例精度を評価する
+# AJIMEE-Benchでかな漢字変換の難例精度を評価する（held-out。調整には使わない）
 evaluate-ajimee *args:
     scripts/evaluate-ajimee.sh {{args}}
+
+# JWTD v2 trainから開発セットを生成する
+build-devset:
+    scripts/build-devset.sh
+
+# 開発セットで変換品質を評価する（コスト・モデル調整はこちらで行う）
+evaluate-dev *args:
+    scripts/evaluate-dev.sh {{args}}
 
 # CI相当の検証をローカルで実行する
 ci: check bench-build

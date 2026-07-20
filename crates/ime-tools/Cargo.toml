@@ -18,3 +18,7 @@ workspace = true
 [[bin]]
 name = "ime-evaluate"
 path = "src/main.rs"
+
+[[bin]]
+name = "ime-devset"
+path = "src/devset.rs"
