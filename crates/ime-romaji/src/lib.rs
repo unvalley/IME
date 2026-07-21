@@ -52,8 +52,8 @@ impl RomajiComposer {
     /// Returns the text that should be shown while the romaji is ambiguous.
     ///
     /// A single `n` remains literal because it can still become `な` through
-    /// `の`. Two `n`s represent one `ん`, while remaining editable as two key
-    /// strokes until the following input resolves the ambiguity.
+    /// `の`. Two `n`s represent one `ん` and stay editable as two key strokes
+    /// until the next input or a flush commits them.
     #[must_use]
     pub fn preview(&self) -> &str {
         if self.pending == "nn" {
@@ -126,13 +126,11 @@ impl RomajiComposer {
                             break;
                         }
 
+                        // Mainstream IMEs spend both `n`s on one ん and start
+                        // the next syllable fresh: `sennyou` -> せんよう, while
+                        // こんな needs `konnna` or `kon'na`.
                         output.push('ん');
-                        let third = bytes[2];
-                        if is_vowel(third) || third == b'y' {
-                            self.pending.remove(0);
-                        } else {
-                            self.pending.drain(..2);
-                        }
+                        self.pending.drain(..2);
                         continue;
                     }
                     if !is_vowel(second) && second != b'y' {
@@ -550,12 +548,16 @@ mod tests {
 
     #[test]
     fn handles_syllabic_n() {
-        assert_eq!(compose("konna"), "こんな");
         assert_eq!(compose("kanpai"), "かんぱい");
         assert_eq!(compose("kin'youbi"), "きんようび");
         assert_eq!(compose("hon"), "ほん");
         assert_eq!(compose("honn"), "ほん");
-        assert_eq!(compose("annai"), "あんない");
+        assert_eq!(compose("sennyou"), "せんよう");
+        assert_eq!(compose("sannin"), "さんいん");
+        assert_eq!(compose("konnna"), "こんな");
+        assert_eq!(compose("kon'na"), "こんな");
+        assert_eq!(compose("annnai"), "あんない");
+        assert_eq!(compose("minnna"), "みんな");
     }
 
     #[test]

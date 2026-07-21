@@ -726,10 +726,13 @@ mod tests {
     }
 
     #[test]
-    fn double_n_can_still_begin_the_following_na_row_syllable() {
+    fn double_n_spends_both_keys_on_one_syllabic_n() {
         let mut engine = ImeEngine::bundled();
-        type_text(&mut engine, "annai");
+        type_text(&mut engine, "sennyou");
+        assert_eq!(engine.snapshot().preedit, "せんよう");
 
+        let mut engine = ImeEngine::bundled();
+        type_text(&mut engine, "annnai");
         assert_eq!(engine.snapshot().preedit, "あんない");
     }
 
