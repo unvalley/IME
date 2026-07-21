@@ -1,14 +1,23 @@
 あーるえーじー	RAG
+あいえーしー	IaC
 あいでぃーいー	IDE
 あいでんてぃてぃぷろばいだ	Identity Provider
 あじゅーる	Azure
+あぱっちかふか	Apache Kafka
+あんそろぴっく	Anthropic
 あんどろいど	Android
 あんどろいどすたじお	Android Studio
+あんりあるえんじん	Unreal Engine
+いーえすりんと	ESLint
 いしゅーとらっかー	イシュートラッカー	2200
 いべんとそーしんぐ	イベントソーシング	2200
+いんてりじぇいあいであ	IntelliJ IDEA
 うぇぶあせんぶり	WebAssembly
 うぇぶじーえる	WebGL
 うぇぶじーぴーゆー	WebGPU
+うぇぶぱっく	webpack
+うぇぶふっく	Webhook
+うぶんとぅ	Ubuntu
 えーあい	AI
 えーえすたー	A*
 えーだぶりゅーえす	AWS
@@ -17,13 +26,17 @@
 えすきゅーえる	SQL
 えすでぃーけー	SDK
 えすあーるいー	SRE
+えすぼむ	SBOM
 えっくすこーど	Xcode
 えるえるえむ	LLM
 えらすてぃっくさーち	Elasticsearch
+えんじんえっくす	nginx
 えんどつーえんどてすと	E2Eテスト
+おーぷんえーあい	OpenAI
 おーぷんえーぴーあい	OpenAPI
 おーぷんあいでぃーこねくと	OpenID Connect
 おーおーす	OAuth
+おーぷんてれめとりー	OpenTelemetry
 おぶざーばびりてぃ	オブザーバビリティ
 おぶじぇくてぃぶしー	Objective-C
 がーべじこれくしょん	ガベージコレクション	2200
@@ -37,10 +50,13 @@
 くーばねてす	Kubernetes
 くらうどねいてぃぶ	クラウドネイティブ	2200
 くらうどふれあ	Cloudflare
+くろーど	Claude	2200
+ぐらふぁな	Grafana
 ぐらふきゅーえる	GraphQL
 くろすさいとすくりぷてぃんぐ	クロスサイトスクリプティング	2200
 けいぞくてきいんてぐれーしょん	継続的インテグレーション	2200
 けいぞくてきでりばりー	継続的デリバリー	2200
+こんふるえんす	Confluence
 ごー	Go
 こーどれびゅー	コードレビュー
 こっとりん	Kotlin
@@ -55,21 +71,31 @@
 じーしーぴー	GCP
 じーぴーゆー	GPU
 じぇいそん	JSON
+じぇみない	Gemini
 じゃば	Java
 じゃばすくりぷと	JavaScript
+じゅぴたーのーとぶっく	Jupyter Notebook
+じら	Jira	2200
+すーぱーべーす	Supabase
 すうぃふと	Swift
 すうぃふとぱっけーじまねーじゃー	Swift Package Manager
 すうぃふとゆーあい	SwiftUI
 すきゅーえるらいと	SQLite
 すから	Scala
 すべると	Svelte
+すらっく	Slack
+せいせいえーあい	生成AI
+せんとりー	Sentry
 ぜろだうんたいむ	ゼロダウンタイム	2200
 ぜろとらすと	ゼロトラスト	2200
 たいぷすくりぷと	TypeScript
 たいぷせーふ	型安全	2500
+ちゃっとじーぴーてぃー	ChatGPT
 てぃーしーぴーあいぴー	TCP/IP
 てぃーでぃーでぃー	TDD
 てぃーえるえす	TLS
+てんそるふろー	TensorFlow
+でーたどっぐ	Datadog
 でぃーでぃーでぃー	DDD
 でぃーえぬえす	DNS
 でっどろっく	デッドロック
@@ -77,31 +103,44 @@
 てらふぉーむ	Terraform
 どっかー	Docker
 どめいんくどうせっけい	ドメイン駆動設計	2200
+ねおゔぃむ	Neovim
 ねくすとじぇいえす	Next.js
 ぬくすとじぇいえす	Nuxt.js
 ねいてぃぶあぷり	ネイティブアプリ	2200
+のーしょん	Notion
+のーどじぇいえす	Node.js
+はぎんぐふぇいす	Hugging Face
 ばーせる	Vercel
 ばっくぷれっしゃー	バックプレッシャー	2200
 ぱいそん	Python
+ぱいとーち	PyTorch
 びじゅあるすたじおこーど	Visual Studio Code
+ふぁいあべーす	Firebase
 ふぃーちゃーふらぐ	フィーチャーフラグ	2200
 ふらったー	Flutter
 ぶいえすこーど	VS Code
 ぶるーぐりーんでぷろい	ブルーグリーンデプロイ	2200
+ぷりてぃあ	Prettier
 ぷるりくえすと	プルリクエスト
 ぷろとこるばっふぁー	Protocol Buffers
 ぷろめてうす	Prometheus
+へっどれすしーえむえす	ヘッドレスCMS
+べきとうせい	冪等性	1800
 ぽすとぐれすきゅーえる	PostgreSQL
 まいえすきゅーえる	MySQL
 まいくろさーびす	マイクロサービス	2200
 めもりりーく	メモリリーク	2200
+ものれぽ	モノレポ	2200
 もんごでぃーびー	MongoDB
 やむる	YAML
+ゆにてぃ	Unity
 らすとげんご	Rust
 りあくと	React
 りあくとねいてぃぶ	React Native
 りでぃす	Redis
+りなっくす	Linux
 りふぁくたりんぐ	リファクタリング
 れいてんし	レイテンシ
 ろーるばっく	ロールバック	2200
 わずむ	WASM
+ゔぃむ	Vim

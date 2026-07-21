@@ -878,6 +878,18 @@ mod tests {
             ("とーんあんどまなー", "トーン＆マナー"),
             ("きーびじゅある", "キービジュアル"),
             ("わいやーふれーむ", "ワイヤーフレーム"),
+            ("ちゃっとじーぴーてぃー", "ChatGPT"),
+            ("おーぷんえーあい", "OpenAI"),
+            ("せいせいえーあい", "生成AI"),
+            ("のーどじぇいえす", "Node.js"),
+            ("りなっくす", "Linux"),
+            ("べきとうせい", "冪等性"),
+            ("えすでぃーじーず", "SDGs"),
+            ("じーでぃーぴーあーる", "GDPR"),
+            ("くりのべぜいきんしさん", "繰延税金資産"),
+            ("ふぃぐま", "Figma"),
+            ("あふたーえふぇくつ", "After Effects"),
+            ("きんそくしょり", "禁則処理"),
         ] {
             assert_eq!(
                 dictionary.candidates(reading)[0].surface,
@@ -893,6 +905,13 @@ mod tests {
 
         assert_eq!(dictionary.candidates("けっさい")[0].surface, "決済");
         assert_eq!(dictionary.candidates("らすと")[0].surface, "ラスト");
+        assert_eq!(dictionary.candidates("こまわり")[0].surface, "小回り");
+        assert!(
+            dictionary
+                .candidates("こまわり")
+                .iter()
+                .any(|candidate| candidate.surface == "コマ割り")
+        );
         assert_eq!(
             dictionary.convert_best("らすとのきょく").unwrap().surface,
             "ラストの曲"
