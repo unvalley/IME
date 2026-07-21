@@ -13,6 +13,9 @@ fn main() {
     run("converter/segmented_phrase", iterations, || {
         black_box(dictionary.convert_best(black_box("わたしはにほん")));
     });
+    run("converter/n_best_search", iterations, || {
+        black_box(dictionary.convert_n_best(black_box("わたしはにほん"), black_box(10)));
+    });
     run("converter/n_best_phrase", iterations, || {
         black_box(dictionary.candidates(black_box("わたしはにほん")));
     });

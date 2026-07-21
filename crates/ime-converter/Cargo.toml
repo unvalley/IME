@@ -7,6 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+bumpalo = { version = "3.20.3", features = ["collections"] }
 fst = "0.4"
 
 [build-dependencies]
@@ -19,3 +20,6 @@ workspace = true
 name = "converter"
 harness = false
 
+[[bench]]
+name = "allocations"
+harness = false

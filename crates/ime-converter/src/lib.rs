@@ -3,7 +3,9 @@
 
 mod compact;
 
+use bumpalo::{Bump, collections::String as BumpString};
 use compact::CompactDictionary;
+use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -462,7 +464,8 @@ impl Dictionary {
         }
 
         let connection = ConnectionMatrix::bundled();
-        let synthetic_by_start = synthetic_entries_by_start(reading);
+        let synthetic_arena = Bump::new();
+        let synthetic_by_start = synthetic_entries_by_start(reading, &synthetic_arena);
         let mut lattice: Vec<Vec<LatticeNode<'_>>> =
             (0..=reading.len()).map(|_| Vec::new()).collect();
         let mut predecessor_cache = Vec::new();
@@ -520,7 +523,7 @@ impl Dictionary {
                         start,
                         predecessor,
                         reading: &reading[start..synthetic.end],
-                        surface: &synthetic.surface,
+                        surface: synthetic.surface,
                         segment_cost: synthetic.cost,
                         right_id: synthetic.right_id,
                         total_cost,
@@ -559,8 +562,9 @@ impl Dictionary {
 
     fn convert_n_best_connected(&self, reading: &str, limit: usize) -> Vec<Conversion> {
         let connection = ConnectionMatrix::bundled();
-        let synthetic_by_start = synthetic_entries_by_start(reading);
-        let mut arena = Vec::<NBestNode<'_>>::new();
+        let synthetic_arena = Bump::new();
+        let synthetic_by_start = synthetic_entries_by_start(reading, &synthetic_arena);
+        let mut arena = Vec::<NBestNode<'_>>::with_capacity(n_best_arena_capacity(reading, limit));
         let mut lattice: Vec<Vec<usize>> = (0..=reading.len()).map(|_| Vec::new()).collect();
 
         for start in reading
@@ -597,7 +601,7 @@ impl Dictionary {
                     connection,
                     start,
                     &reading[start..synthetic.end],
-                    &synthetic.surface,
+                    synthetic.surface,
                     (synthetic.left_id, synthetic.right_id),
                     synthetic.cost,
                     limit,
@@ -631,7 +635,7 @@ impl Dictionary {
     }
 
     fn convert_n_best_heuristic(&self, reading: &str, limit: usize) -> Vec<Conversion> {
-        let mut arena = Vec::<NBestNode<'_>>::new();
+        let mut arena = Vec::<NBestNode<'_>>::with_capacity(n_best_arena_capacity(reading, limit));
         let mut lattice: Vec<Vec<usize>> = (0..=reading.len()).map(|_| Vec::new()).collect();
 
         for start in reading
@@ -676,7 +680,7 @@ impl Dictionary {
                             &mut lattice[start + relative_end],
                             NBestNode {
                                 start,
-                                predecessor: Some(predecessor),
+                                predecessor: Some(NodeIndex::new(predecessor)),
                                 reading: prefix,
                                 surface: entry.surface,
                                 segment_cost,
@@ -773,7 +777,7 @@ fn reconstruct_connected_conversion(
             break;
         };
         cursor = node.start;
-        node_index = predecessor;
+        node_index = predecessor.get();
     }
     reversed.reverse();
 
@@ -805,7 +809,7 @@ struct Predecessor {
 #[derive(Clone, Debug)]
 struct LatticeNode<'a> {
     start: usize,
-    predecessor: Option<usize>,
+    predecessor: Option<NodeIndex>,
     reading: &'a str,
     surface: &'a str,
     segment_cost: i32,
@@ -816,13 +820,30 @@ struct LatticeNode<'a> {
 #[derive(Clone, Debug)]
 struct NBestNode<'a> {
     start: usize,
-    predecessor: Option<usize>,
+    predecessor: Option<NodeIndex>,
     reading: &'a str,
     surface: &'a str,
     segment_cost: i32,
     right_id: u16,
     total_cost: i32,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct NodeIndex(NonZeroUsize);
+
+impl NodeIndex {
+    fn new(index: usize) -> Self {
+        let encoded = index.checked_add(1).expect("node index overflow");
+        Self(NonZeroUsize::new(encoded).expect("encoded node index is non-zero"))
+    }
+
+    fn get(self) -> usize {
+        self.0.get() - 1
+    }
+}
+
+const _: () = assert!(std::mem::size_of::<LatticeNode<'static>>() <= 64);
+const _: () = assert!(std::mem::size_of::<NBestNode<'static>>() <= 64);
 
 fn insert_connected_unknown<'a>(
     reading: &'a str,
@@ -859,18 +880,19 @@ fn insert_connected_unknown<'a>(
         return;
     }
 
+    let mut connection_cache = ConnectionCostCache::new(UNKNOWN_POS_ID);
     for &predecessor in predecessors {
         let previous = &arena[predecessor];
         let total_cost = previous
             .total_cost
-            .saturating_add(connection.cost(previous.right_id, UNKNOWN_POS_ID))
+            .saturating_add(connection_cache.cost(connection, previous.right_id))
             .saturating_add(UNKNOWN_COST);
         insert_n_best_node(
             arena,
             &mut lattice[end],
             NBestNode {
                 start,
-                predecessor: Some(predecessor),
+                predecessor: Some(NodeIndex::new(predecessor)),
                 reading: literal,
                 surface: literal,
                 segment_cost: UNKNOWN_COST,
@@ -920,7 +942,7 @@ fn insert_heuristic_unknown<'a>(
             &mut lattice[end],
             NBestNode {
                 start,
-                predecessor: Some(predecessor),
+                predecessor: Some(NodeIndex::new(predecessor)),
                 reading: literal,
                 surface: literal,
                 segment_cost: UNKNOWN_COST,
@@ -968,18 +990,19 @@ fn insert_connected_word<'a>(
         return;
     }
 
+    let mut connection_cache = ConnectionCostCache::new(left_id);
     for &predecessor in predecessors {
         let previous = &arena[predecessor];
         let total_cost = previous
             .total_cost
-            .saturating_add(connection.cost(previous.right_id, left_id))
+            .saturating_add(connection_cache.cost(connection, previous.right_id))
             .saturating_add(word_cost);
         insert_n_best_node(
             arena,
             states,
             NBestNode {
                 start,
-                predecessor: Some(predecessor),
+                predecessor: Some(NodeIndex::new(predecessor)),
                 reading: word_reading,
                 surface,
                 segment_cost: word_cost,
@@ -997,60 +1020,63 @@ fn insert_n_best_node<'a>(
     candidate: NBestNode<'a>,
     limit_per_state: usize,
 ) {
-    if let Some((position, &existing_index)) = states.iter().enumerate().find(|(_, index)| {
-        let existing = &arena[**index];
-        existing.right_id == candidate.right_id
+    // Every target bucket is finalized before it becomes a predecessor. A
+    // replacement can therefore reuse its arena slot without invalidating a
+    // path which has already captured that index.
+    let mut same_state_count = 0;
+    let mut worst_same_state = None;
+    let mut worst_global = None;
+    for (position, &existing_index) in states.iter().enumerate() {
+        let existing = &arena[existing_index];
+        if existing.right_id == candidate.right_id
             && existing.start == candidate.start
             && existing.predecessor == candidate.predecessor
             && existing.reading == candidate.reading
             && existing.surface == candidate.surface
-    }) {
-        if candidate.total_cost < arena[existing_index].total_cost {
-            let index = arena.len();
-            arena.push(candidate);
-            states[position] = index;
+        {
+            if candidate.total_cost < existing.total_cost {
+                arena[existing_index] = candidate;
+            }
+            return;
         }
-        return;
+
+        if existing.right_id == candidate.right_id {
+            same_state_count += 1;
+            if worst_same_state.is_none_or(|(_, cost)| existing.total_cost >= cost) {
+                worst_same_state = Some((position, existing.total_cost));
+            }
+        }
+        if worst_global.is_none_or(|(_, cost)| existing.total_cost >= cost) {
+            worst_global = Some((position, existing.total_cost));
+        }
     }
 
-    let same_state_count = states
-        .iter()
-        .filter(|&&index| arena[index].right_id == candidate.right_id)
-        .count();
     if same_state_count < limit_per_state {
+        let beam_size = limit_per_state.saturating_mul(N_BEST_BEAM_FACTOR);
+        if states.len() >= beam_size {
+            let Some((worst_position, worst_cost)) = worst_global else {
+                return;
+            };
+            if candidate.total_cost >= worst_cost {
+                return;
+            }
+            let worst_index = states[worst_position];
+            arena[worst_index] = candidate;
+            return;
+        }
+
         let index = arena.len();
         arena.push(candidate);
         states.push(index);
-        prune_n_best_states(arena, states, limit_per_state);
         return;
     }
 
-    let Some((worst_position, &worst_index)) = states
-        .iter()
-        .enumerate()
-        .filter(|(_, index)| arena[**index].right_id == candidate.right_id)
-        .max_by_key(|(_, index)| arena[**index].total_cost)
-    else {
+    let Some((worst_position, worst_cost)) = worst_same_state else {
         return;
     };
-    if candidate.total_cost < arena[worst_index].total_cost {
-        let index = arena.len();
-        arena.push(candidate);
-        states[worst_position] = index;
-    }
-}
-
-fn prune_n_best_states(arena: &[NBestNode<'_>], states: &mut Vec<usize>, limit: usize) {
-    let beam_size = limit.saturating_mul(N_BEST_BEAM_FACTOR);
-    if states.len() <= beam_size {
-        return;
-    }
-    if let Some((position, _)) = states
-        .iter()
-        .enumerate()
-        .max_by_key(|(_, index)| arena[**index].total_cost)
-    {
-        states.swap_remove(position);
+    if candidate.total_cost < worst_cost {
+        let worst_index = states[worst_position];
+        arena[worst_index] = candidate;
     }
 }
 
@@ -1070,7 +1096,7 @@ fn reconstruct_n_best_conversions(
                 surface: node.surface.to_owned(),
                 cost: node.segment_cost,
             });
-            cursor = node.predecessor;
+            cursor = node.predecessor.map(NodeIndex::get);
         }
         reversed.reverse();
         let surface = reversed
@@ -1100,7 +1126,7 @@ fn best_connected_predecessor(
     start: usize,
     left_id: u16,
     connection: ConnectionMatrix,
-) -> Option<(i32, Option<usize>)> {
+) -> Option<(i32, Option<NodeIndex>)> {
     if start == 0 {
         return Some((connection.cost(BOS_EOS_POS_ID, left_id), None));
     }
@@ -1112,7 +1138,7 @@ fn best_connected_predecessor(
             (
                 node.total_cost
                     .saturating_add(connection.cost(node.right_id, left_id)),
-                Some(index),
+                Some(NodeIndex::new(index)),
             )
         })
         .min_by_key(|(cost, _)| *cost)
@@ -1123,8 +1149,8 @@ fn cached_connected_predecessor(
     start: usize,
     left_id: u16,
     connection: ConnectionMatrix,
-    cache: &mut Vec<(u16, i32, Option<usize>)>,
-) -> Option<(i32, Option<usize>)> {
+    cache: &mut Vec<(u16, i32, Option<NodeIndex>)>,
+) -> Option<(i32, Option<NodeIndex>)> {
     if let Some((_, cost, predecessor)) = cache
         .iter()
         .find(|(cached_left_id, _, _)| *cached_left_id == left_id)
@@ -1157,6 +1183,31 @@ struct ConnectionMatrix {
     offsets_start: usize,
     modes_start: usize,
     entries_start: usize,
+}
+
+struct ConnectionCostCache {
+    left_id: u16,
+    right_ids: [u16; 16],
+    costs: [i32; 16],
+}
+
+impl ConnectionCostCache {
+    fn new(left_id: u16) -> Self {
+        Self {
+            left_id,
+            right_ids: [u16::MAX; 16],
+            costs: [0; 16],
+        }
+    }
+
+    fn cost(&mut self, connection: ConnectionMatrix, right_id: u16) -> i32 {
+        let slot = usize::from(right_id) & (self.right_ids.len() - 1);
+        if self.right_ids[slot] != right_id {
+            self.right_ids[slot] = right_id;
+            self.costs[slot] = connection.cost(right_id, self.left_id);
+        }
+        self.costs[slot]
+    }
 }
 
 impl ConnectionMatrix {
@@ -1261,6 +1312,14 @@ const KANJI_NUMBER_POS_ID: u16 = 2051;
 const NUMBER_VARIANT_STEP: i32 = 50;
 const KATAKANA_RUN_MAX_CHARACTERS: usize = 12;
 
+fn n_best_arena_capacity(reading: &str, limit: usize) -> usize {
+    reading
+        .chars()
+        .count()
+        .saturating_mul(limit.min(DEFAULT_N_BEST))
+        .saturating_mul(N_BEST_BEAM_FACTOR)
+}
+
 fn katakana_run_base_cost() -> i32 {
     static VALUE: OnceLock<i32> = OnceLock::new();
     *VALUE.get_or_init(|| tuning_parameter("IME_KATAKANA_BASE", 1_000))
@@ -1333,19 +1392,19 @@ fn is_grammar_literal(reading: &str) -> bool {
 /// composed numerals (せんきゅうひゃく → 1900) and katakana runs for unknown
 /// foreign words. `end` is the absolute byte offset where the node stops.
 #[derive(Clone, Debug)]
-struct SyntheticEntry {
+struct SyntheticEntry<'a> {
     end: usize,
-    surface: String,
+    surface: &'a str,
     left_id: u16,
     right_id: u16,
     cost: i32,
 }
 
-fn synthetic_entries_by_start(reading: &str) -> Vec<Vec<SyntheticEntry>> {
+fn synthetic_entries_by_start<'a>(reading: &str, arena: &'a Bump) -> Vec<Vec<SyntheticEntry<'a>>> {
     let mut by_start: Vec<Vec<SyntheticEntry>> = (0..=reading.len()).map(|_| Vec::new()).collect();
     for (start, _) in reading.char_indices() {
-        push_number_entries(reading, start, &mut by_start[start]);
-        push_katakana_entries(reading, start, &mut by_start[start]);
+        push_number_entries(reading, start, arena, &mut by_start[start]);
+        push_katakana_entries(reading, start, arena, &mut by_start[start]);
     }
     by_start
 }
@@ -1552,13 +1611,18 @@ fn mixed_numeral(value: u64) -> Option<String> {
     Some(result)
 }
 
-fn push_number_entries(reading: &str, start: usize, out: &mut Vec<SyntheticEntry>) {
+fn push_number_entries<'a>(
+    reading: &str,
+    start: usize,
+    arena: &'a Bump,
+    out: &mut Vec<SyntheticEntry<'a>>,
+) {
     for (length, value) in parse_kana_number_prefixes(&reading[start..]) {
         let arabic = value.to_string();
         if let Some(mixed) = mixed_numeral(value) {
             out.push(SyntheticEntry {
                 end: start + length,
-                surface: mixed,
+                surface: arena.alloc_str(&mixed),
                 left_id: ARABIC_NUMBER_POS_ID,
                 right_id: ARABIC_NUMBER_POS_ID,
                 cost: number_cost() - NUMBER_VARIANT_STEP,
@@ -1566,21 +1630,21 @@ fn push_number_entries(reading: &str, start: usize, out: &mut Vec<SyntheticEntry
         }
         out.push(SyntheticEntry {
             end: start + length,
-            surface: to_fullwidth_digits(&arabic),
+            surface: arena.alloc_str(&to_fullwidth_digits(&arabic)),
             left_id: ARABIC_NUMBER_POS_ID,
             right_id: ARABIC_NUMBER_POS_ID,
             cost: number_cost() + NUMBER_VARIANT_STEP,
         });
         out.push(SyntheticEntry {
             end: start + length,
-            surface: kanji_numeral(value),
+            surface: arena.alloc_str(&kanji_numeral(value)),
             left_id: KANJI_NUMBER_POS_ID,
             right_id: KANJI_NUMBER_POS_ID,
             cost: number_cost() + 2 * NUMBER_VARIANT_STEP,
         });
         out.push(SyntheticEntry {
             end: start + length,
-            surface: arabic,
+            surface: arena.alloc_str(&arabic),
             left_id: ARABIC_NUMBER_POS_ID,
             right_id: ARABIC_NUMBER_POS_ID,
             cost: number_cost(),
@@ -1592,8 +1656,13 @@ fn is_katakana_run_character(character: char) -> bool {
     matches!(character, 'ぁ'..='ゖ' | 'ー')
 }
 
-fn push_katakana_entries(reading: &str, start: usize, out: &mut Vec<SyntheticEntry>) {
-    let mut surface = String::new();
+fn push_katakana_entries<'a>(
+    reading: &str,
+    start: usize,
+    arena: &'a Bump,
+    out: &mut Vec<SyntheticEntry<'a>>,
+) {
+    let mut surface = BumpString::with_capacity_in(reading.len() - start, arena);
     let mut characters = 0_usize;
     for (offset, character) in reading[start..].char_indices() {
         if !is_katakana_run_character(character) || characters == KATAKANA_RUN_MAX_CHARACTERS {
@@ -1609,7 +1678,7 @@ fn push_katakana_entries(reading: &str, start: usize, out: &mut Vec<SyntheticEnt
         if characters >= 2 {
             out.push(SyntheticEntry {
                 end: start + offset + character.len_utf8(),
-                surface: surface.clone(),
+                surface: arena.alloc_str(surface.as_str()),
                 left_id: UNKNOWN_POS_ID,
                 right_id: UNKNOWN_POS_ID,
                 cost: katakana_run_base_cost()
@@ -1623,7 +1692,8 @@ fn push_katakana_entries(reading: &str, start: usize, out: &mut Vec<SyntheticEnt
 #[cfg(test)]
 mod tests {
     use super::{
-        CandidateRanker, Conversion, Dictionary, DictionaryEntry, DictionaryLayer, UNKNOWN_POS_ID,
+        CandidateRanker, ConnectionCostCache, ConnectionMatrix, Conversion, Dictionary,
+        DictionaryEntry, DictionaryLayer, UNKNOWN_POS_ID,
     };
 
     struct PreferSurface<'a>(&'a str);
@@ -1635,6 +1705,19 @@ mod tests {
             } else {
                 conversion.cost
             }
+        }
+    }
+
+    #[test]
+    fn connection_cost_cache_handles_direct_map_collisions() {
+        let connection = ConnectionMatrix::bundled();
+        let mut cache = ConnectionCostCache::new(100);
+
+        for right_id in [0, 16, 0] {
+            assert_eq!(
+                cache.cost(connection, right_id),
+                connection.cost(right_id, 100)
+            );
         }
     }
 
