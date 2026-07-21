@@ -190,6 +190,7 @@ impl ImeEngine {
 
     fn handle_character(&mut self, character: char) -> Vec<ImeAction> {
         let mut actions = Vec::with_capacity(4);
+        let had_completions = self.candidate_kind == Some(CandidateKind::Completion);
         if self.phase() == Phase::Converting {
             let committed = self.selected_candidate().to_owned();
             let reading = self.reading.clone();
@@ -197,7 +198,7 @@ impl ImeEngine {
             actions.push(ImeAction::Commit(committed));
             self.clear_composition();
             actions.push(ImeAction::HideCandidates);
-        } else if self.candidate_kind == Some(CandidateKind::Completion) {
+        } else if had_completions {
             self.clear_candidates();
         }
 
@@ -216,6 +217,12 @@ impl ImeEngine {
 
         self.live_preview_suppressed = false;
         actions.extend(self.refresh_composition_actions());
+        if had_completions
+            && !actions.contains(&ImeAction::HideCandidates)
+            && self.candidates.is_empty()
+        {
+            actions.push(ImeAction::HideCandidates);
+        }
         actions
     }
 
@@ -915,6 +922,35 @@ mod tests {
 
         let actions = engine.handle(InputEvent::AcceptCandidate);
         assert!(actions.contains(&ImeAction::Commit("パフォーマンス".to_owned())));
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn completions_hide_when_reading_stops_matching_history() {
+        let directory = test_directory("completion-stale-hide");
+        fs::write(
+            directory.join("history.tsv"),
+            "# unvalley-ime-history-v1\nどうじしんこう\t同時進行\t3\t10\n",
+        )
+        .unwrap();
+        let mut engine = ImeEngine::bundled_with_user_data(UserData::load(&directory));
+        engine.set_preferences(EnginePreferences {
+            live_conversion: false,
+            history_completion: true,
+            history_learning: true,
+            dictionary_packs: 0,
+        });
+
+        type_text(&mut engine, "dou");
+        assert_eq!(engine.snapshot().candidates, ["同時進行"]);
+
+        engine.handle(InputEvent::Character('g'));
+        assert_eq!(engine.snapshot().candidates, ["同時進行"]);
+
+        let actions = engine.handle(InputEvent::Character('u'));
+        assert!(actions.contains(&ImeAction::HideCandidates));
+        assert!(engine.snapshot().candidates.is_empty());
+        assert_eq!(engine.snapshot().preedit, "どうぐ");
         fs::remove_dir_all(directory).unwrap();
     }
 
