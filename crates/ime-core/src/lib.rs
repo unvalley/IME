@@ -11,6 +11,7 @@ use session_history::SessionHistory;
 
 pub use domain_dictionaries::{
     ALL_DOMAIN_DICTIONARIES, BUSINESS_DICTIONARY, CREATIVE_DICTIONARY, TECHNOLOGY_DICTIONARY,
+    words as domain_dictionary_words,
 };
 pub use user_data::{HistoryEntry, UserData, UserDictionaryEntry};
 

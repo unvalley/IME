@@ -43,6 +43,7 @@ ImeBuffer ime_set_options_v3(ImeHandle *handle, bool live_conversion,
                              bool history_completion, bool history_learning,
                              uint32_t dictionary_packs);
 ImeBuffer ime_reload_user_data(ImeHandle *handle);
+ImeBuffer ime_domain_dictionary_words(uint32_t mask);
 void ime_buffer_destroy(ImeBuffer buffer);
 
 #ifdef __cplusplus

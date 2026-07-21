@@ -12,34 +12,64 @@ const MIN_DOMAIN_WORD_COST: i32 = 100;
 const MAX_DOMAIN_WORD_COST: i32 = 12_000;
 const USER_WORD_COST: i32 = 100;
 
+struct DomainSource {
+    mask: u32,
+    id: &'static str,
+    name: &'static str,
+    source: &'static str,
+}
+
+const SOURCES: [DomainSource; 3] = [
+    DomainSource {
+        mask: TECHNOLOGY_DICTIONARY,
+        id: "technology",
+        name: "テクノロジー",
+        source: include_str!("../data/technology.tsv"),
+    },
+    DomainSource {
+        mask: BUSINESS_DICTIONARY,
+        id: "business",
+        name: "ビジネス",
+        source: include_str!("../data/business.tsv"),
+    },
+    DomainSource {
+        mask: CREATIVE_DICTIONARY,
+        id: "creative",
+        name: "クリエイティブ",
+        source: include_str!("../data/creative.tsv"),
+    },
+];
+
 pub fn layers(mask: u32) -> Vec<DictionaryLayer> {
-    let mask = mask & ALL_DOMAIN_DICTIONARIES;
-    let mut layers = Vec::with_capacity(mask.count_ones() as usize);
-    if mask & TECHNOLOGY_DICTIONARY != 0 {
-        layers.push(parse_layer(
-            "technology",
-            "テクノロジー",
-            include_str!("../data/technology.tsv"),
-            DOMAIN_WORD_COST,
-        ));
+    SOURCES
+        .iter()
+        .filter(|source| mask & source.mask != 0)
+        .map(|source| parse_layer(source.id, source.name, source.source, DOMAIN_WORD_COST))
+        .collect()
+}
+
+/// Returns the (reading, surface) pairs of the packs selected by `mask`.
+///
+/// # Panics
+///
+/// Panics if a bundled dictionary line is malformed, which the crate tests
+/// rule out for shipped data.
+#[must_use]
+pub fn words(mask: u32) -> Vec<(&'static str, &'static str)> {
+    let mut words = Vec::new();
+    for source in SOURCES.iter().filter(|source| mask & source.mask != 0) {
+        for line in source
+            .source
+            .lines()
+            .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        {
+            let mut columns = line.split('\t');
+            let reading = columns.next().expect("domain dictionary reading");
+            let surface = columns.next().expect("domain dictionary surface");
+            words.push((reading, surface));
+        }
     }
-    if mask & BUSINESS_DICTIONARY != 0 {
-        layers.push(parse_layer(
-            "business",
-            "ビジネス",
-            include_str!("../data/business.tsv"),
-            DOMAIN_WORD_COST,
-        ));
-    }
-    if mask & CREATIVE_DICTIONARY != 0 {
-        layers.push(parse_layer(
-            "creative",
-            "クリエイティブ",
-            include_str!("../data/creative.tsv"),
-            DOMAIN_WORD_COST,
-        ));
-    }
-    layers
+    words
 }
 
 pub fn user_layer<'a>(
@@ -89,7 +119,7 @@ fn entry(reading: &str, surface: &str, cost: i32) -> DictionaryEntry {
 mod tests {
     use super::{
         ALL_DOMAIN_DICTIONARIES, BUSINESS_DICTIONARY, CREATIVE_DICTIONARY, TECHNOLOGY_DICTIONARY,
-        layers, parse_layer,
+        layers, parse_layer, words,
     };
     use std::collections::HashSet;
 
@@ -105,6 +135,27 @@ mod tests {
         assert_eq!(layers(TECHNOLOGY_DICTIONARY).len(), 1);
         assert_eq!(layers(BUSINESS_DICTIONARY).len(), 1);
         assert_eq!(layers(CREATIVE_DICTIONARY).len(), 1);
+    }
+
+    #[test]
+    fn words_expose_every_entry_of_the_selected_packs() {
+        let technology = words(TECHNOLOGY_DICTIONARY);
+        assert_eq!(
+            technology.len(),
+            layers(TECHNOLOGY_DICTIONARY)[0].entry_count()
+        );
+        assert!(
+            technology
+                .iter()
+                .all(|(reading, surface)| !reading.is_empty() && !surface.is_empty())
+        );
+
+        let total: usize = layers(ALL_DOMAIN_DICTIONARIES)
+            .iter()
+            .map(ime_converter::DictionaryLayer::entry_count)
+            .sum();
+        assert_eq!(words(ALL_DOMAIN_DICTIONARIES).len(), total);
+        assert!(words(0).is_empty());
     }
 
     #[test]

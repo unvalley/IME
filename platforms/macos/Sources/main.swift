@@ -19,6 +19,7 @@ final class NSManualApplication: NSApplication {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DomainDictionaryCatalog.loader = RustEngine.domainDictionaryWords(mask:)
         let bundle = Bundle.main
         guard let connectionName = bundle.object(
             forInfoDictionaryKey: "InputMethodConnectionName"

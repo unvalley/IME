@@ -236,6 +236,20 @@ final class SettingsModel: ObservableObject {
     }
 }
 
+struct DomainDictionaryWord: Decodable, Identifiable, Equatable {
+    let reading: String
+    let surface: String
+    var id: String { "\(reading)\u{0}\(surface)" }
+}
+
+/// Loads the bundled words of the domain dictionaries selected by `mask`.
+/// The default returns nothing so this file can build without the Rust
+/// engine (settings preview); the app installs the FFI-backed loader at
+/// launch.
+enum DomainDictionaryCatalog {
+    static var loader: (UInt32) throws -> [DomainDictionaryWord] = { _ in [] }
+}
+
 enum SettingsTab: String {
     case general
     case dictionary
@@ -338,17 +352,107 @@ private struct DomainDictionaryToggle: View {
     let description: String
     let mask: UInt32
     @ObservedObject var model: SettingsModel
+    @State private var showsWords = false
 
     var body: some View {
-        Toggle(isOn: Binding(
-            get: { model.isDictionaryPackEnabled(mask) },
-            set: { model.setDictionaryPack(mask, enabled: $0) }
-        )) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                Text(description)
+        HStack(spacing: 12) {
+            Toggle(isOn: Binding(
+                get: { model.isDictionaryPackEnabled(mask) },
+                set: { model.setDictionaryPack(mask, enabled: $0) }
+            )) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Button {
+                showsWords = true
+            } label: {
+                Image(systemName: "list.bullet.rectangle")
+            }
+            .buttonStyle(.borderless)
+            .help("収録語を見る")
+        }
+        .sheet(isPresented: $showsWords) {
+            DomainDictionaryWordsView(title: title, mask: mask)
+        }
+    }
+}
+
+private struct DomainDictionaryWordsView: View {
+    let title: String
+    let mask: UInt32
+    @Environment(\.dismiss) private var dismiss
+    @State private var words: [DomainDictionaryWord] = []
+    @State private var query = ""
+    @State private var loadError: String?
+
+    private var filteredWords: [DomainDictionaryWord] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return words }
+        return words.filter {
+            $0.reading.localizedStandardContains(query)
+                || $0.surface.localizedStandardContains(query)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("「\(title)」の収録語")
+                    .font(.title3.weight(.semibold))
+                Text("この辞書はアプリに組み込まれていて、編集はユーザー辞書で行います。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("読みまたは単語を検索", text: $query)
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(.quaternary.opacity(0.7), in: RoundedRectangle(cornerRadius: 7))
+
+            List(filteredWords) { word in
+                HStack {
+                    Text(word.reading)
+                        .frame(width: 180, alignment: .leading)
+                        .foregroundStyle(.secondary)
+                    Text(word.surface)
+                }
+            }
+            .overlay {
+                if filteredWords.isEmpty {
+                    EmptyStateView(
+                        title: words.isEmpty ? "収録語を読み込めませんでした" : "一致する単語がありません",
+                        systemImage: "character.book.closed",
+                        description: words.isEmpty
+                            ? (loadError ?? "IMEを再起動してからもう一度開いてください。")
+                            : "別の読みまたは単語で検索してください。"
+                    )
+                }
+            }
+
+            HStack {
+                Text("\(words.count)語")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("閉じる") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 480, height: 440)
+        .onAppear {
+            do {
+                words = try DomainDictionaryCatalog.loader(mask)
+            } catch {
+                loadError = error.localizedDescription
             }
         }
     }

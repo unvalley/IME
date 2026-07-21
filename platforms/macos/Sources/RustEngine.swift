@@ -97,6 +97,28 @@ final class RustEngine {
         return try decode(buffer)
     }
 
+    static func domainDictionaryWords(mask: UInt32) throws -> [DomainDictionaryWord] {
+        struct WordsResponse: Decodable {
+            let ok: Bool
+            let words: [DomainDictionaryWord]?
+            let error: String?
+        }
+
+        let buffer = ime_domain_dictionary_words(mask)
+        defer { ime_buffer_destroy(buffer) }
+
+        guard let bytes = buffer.data, buffer.len > 0 else {
+            throw EngineError.invalidBuffer
+        }
+
+        let data = Data(bytes: bytes, count: buffer.len)
+        let response = try JSONDecoder().decode(WordsResponse.self, from: data)
+        guard response.ok else {
+            throw EngineError.rejected(response.error ?? "unknown_error")
+        }
+        return response.words ?? []
+    }
+
     private func decode(_ buffer: ImeBuffer) throws -> [Action] {
         defer { ime_buffer_destroy(buffer) }
 

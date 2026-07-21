@@ -229,6 +229,33 @@ pub unsafe extern "C" fn ime_reload_user_data(handle: *mut ImeHandle) -> ImeBuff
     unsafe { engine_control(handle, ImeEngine::reload_user_data) }
 }
 
+/// Returns the bundled domain dictionary words for `mask` as UTF-8 JSON.
+///
+/// The mask uses the same bits as the `dictionary_packs` option. The returned
+/// buffer must be released with [`ime_buffer_destroy`].
+#[unsafe(no_mangle)]
+pub extern "C" fn ime_domain_dictionary_words(mask: u32) -> ImeBuffer {
+    let result = catch_unwind(|| {
+        let mut output = String::from("{\"ok\":true,\"words\":[");
+        for (index, (reading, surface)) in ime_core::domain_dictionary_words(mask)
+            .into_iter()
+            .enumerate()
+        {
+            if index > 0 {
+                output.push(',');
+            }
+            output.push_str("{\"reading\":");
+            write_json_string(&mut output, reading);
+            output.push_str(",\"surface\":");
+            write_json_string(&mut output, surface);
+            output.push('}');
+        }
+        output.push_str("]}");
+        output
+    });
+    ImeBuffer::from_string(result.unwrap_or_else(|_| error_response("panic")))
+}
+
 /// Releases a buffer returned by [`ime_process`].
 ///
 /// # Safety
@@ -355,8 +382,8 @@ fn write_json_string(output: &mut String, value: &str) {
 mod tests {
     use super::{
         EVENT_CHARACTER, EVENT_ENTER, EVENT_SPACE, ImeBuffer, ime_buffer_destroy, ime_create,
-        ime_create_with_data_dir, ime_destroy, ime_process, ime_set_options, ime_set_options_v2,
-        ime_set_options_v3,
+        ime_create_with_data_dir, ime_destroy, ime_domain_dictionary_words, ime_process,
+        ime_set_options, ime_set_options_v2, ime_set_options_v3,
     };
     use std::fs;
 
@@ -483,6 +510,25 @@ mod tests {
 
         // SAFETY: `handle` is live and has not previously been released.
         unsafe { ime_destroy(handle) };
+    }
+
+    #[test]
+    fn domain_dictionary_words_are_exposed_as_json() {
+        let buffer = ime_domain_dictionary_words(1);
+        // SAFETY: `buffer` remains live until the destroy call below.
+        let json = unsafe { copy_buffer(&buffer) };
+        assert!(json.starts_with("{\"ok\":true,\"words\":["), "{json}");
+        assert!(json.contains("\"reading\":"), "{json}");
+        assert!(json.contains("\"surface\":"), "{json}");
+        // SAFETY: `buffer` is the original live buffer.
+        unsafe { ime_buffer_destroy(buffer) };
+
+        let empty = ime_domain_dictionary_words(0);
+        // SAFETY: `empty` remains live until the destroy call below.
+        let json = unsafe { copy_buffer(&empty) };
+        assert_eq!(json, "{\"ok\":true,\"words\":[]}");
+        // SAFETY: `empty` is the original live buffer.
+        unsafe { ime_buffer_destroy(empty) };
     }
 
     #[test]
