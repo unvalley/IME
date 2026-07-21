@@ -4,9 +4,11 @@ use ime_converter::Dictionary;
 use ime_romaji::RomajiComposer;
 
 mod domain_dictionaries;
+mod english_reverse;
 mod session_history;
 mod user_data;
 
+use english_reverse::ReverseMatch;
 use session_history::SessionHistory;
 
 pub use domain_dictionaries::{
@@ -86,6 +88,10 @@ pub struct ImeEngine {
     user_data: UserData,
     session_history: SessionHistory,
     uses_bundled_dictionary: bool,
+    /// `(lowercased key, surface)` pairs of ASCII words from the enabled
+    /// domain dictionaries and the user dictionary, for reverse matching
+    /// English words typed in kana mode.
+    ascii_surfaces: Vec<(String, String)>,
 }
 
 impl ImeEngine {
@@ -105,15 +111,18 @@ impl ImeEngine {
             user_data: UserData::default(),
             session_history: SessionHistory::default(),
             uses_bundled_dictionary: false,
+            ascii_surfaces: Vec::new(),
         }
     }
 
     #[must_use]
     pub fn with_user_data(dictionary: Dictionary, user_data: UserData) -> Self {
-        Self {
+        let mut engine = Self {
             user_data,
             ..Self::new(dictionary)
-        }
+        };
+        engine.rebuild_ascii_surfaces();
+        engine
     }
 
     #[must_use]
@@ -141,6 +150,7 @@ impl ImeEngine {
             self.dictionary = bundled_dictionary(preferences.dictionary_packs, &self.user_data);
         }
         self.preferences = preferences;
+        self.rebuild_ascii_surfaces();
         self.live_preview_suppressed = false;
         self.refresh_live_preview();
         self.refresh_completion_actions(true)
@@ -152,8 +162,50 @@ impl ImeEngine {
             self.dictionary =
                 bundled_dictionary(self.preferences.dictionary_packs, &self.user_data);
         }
+        self.rebuild_ascii_surfaces();
         self.refresh_live_preview();
         self.refresh_completion_actions(true)
+    }
+
+    fn rebuild_ascii_surfaces(&mut self) {
+        self.ascii_surfaces.clear();
+        let user_entries = self
+            .user_data
+            .dictionary_entries()
+            .map(|(_, surface)| surface);
+        let domain_words = domain_dictionaries::words(self.preferences.dictionary_packs)
+            .into_iter()
+            .map(|(_, surface)| surface);
+        for surface in user_entries.chain(domain_words) {
+            if let Some(key) = english_reverse::surface_key(surface)
+                && !self
+                    .ascii_surfaces
+                    .iter()
+                    .any(|(_, existing)| existing == surface)
+            {
+                self.ascii_surfaces.push((key, surface.to_owned()));
+            }
+        }
+    }
+
+    /// Returns ASCII surfaces whose spelling the current reading retypes,
+    /// exact matches first.
+    fn english_reverse_surfaces(&self, target: &str) -> Vec<String> {
+        if target.is_empty() || self.ascii_surfaces.is_empty() {
+            return Vec::new();
+        }
+        let mut exact = Vec::new();
+        let mut prefix = Vec::new();
+        for (key, surface) in &self.ascii_surfaces {
+            match english_reverse::reverse_match(target, key) {
+                Some(ReverseMatch::Exact) => exact.push(surface.clone()),
+                Some(ReverseMatch::Prefix) => prefix.push(surface.clone()),
+                None => {}
+            }
+        }
+        exact.extend(prefix);
+        exact.truncate(3);
+        exact
     }
 
     #[must_use]
@@ -253,6 +305,11 @@ impl ImeEngine {
             }
             for surface in self.user_data.exact_history_surfaces(&self.reading) {
                 push_unique(&mut candidates, surface.to_owned());
+            }
+        }
+        for (key, surface) in &self.ascii_surfaces {
+            if english_reverse::reverse_match(&self.reading, key) == Some(ReverseMatch::Exact) {
+                push_unique(&mut candidates, surface.clone());
             }
         }
         for surface in self
@@ -508,22 +565,23 @@ impl ImeEngine {
             return Vec::new();
         }
 
-        let suggestions =
-            if self.preferences.history_completion && self.reading.chars().count() >= 2 {
-                let mut suggestions = Vec::with_capacity(9);
-                for surface in self.session_history.completion_surfaces(&self.reading, 9) {
-                    push_unique(&mut suggestions, surface.to_owned());
+        let mut suggestions = Vec::with_capacity(9);
+        let mut reverse_target = self.reading.clone();
+        reverse_target.push_str(self.romaji.pending());
+        for surface in self.english_reverse_surfaces(&reverse_target) {
+            push_unique(&mut suggestions, surface);
+        }
+        if self.preferences.history_completion && self.reading.chars().count() >= 2 {
+            for surface in self.session_history.completion_surfaces(&self.reading, 9) {
+                push_unique(&mut suggestions, surface.to_owned());
+            }
+            for surface in self.user_data.completion_surfaces(&self.reading, 9) {
+                push_unique(&mut suggestions, surface);
+                if suggestions.len() == 9 {
+                    break;
                 }
-                for surface in self.user_data.completion_surfaces(&self.reading, 9) {
-                    push_unique(&mut suggestions, surface);
-                    if suggestions.len() == 9 {
-                        break;
-                    }
-                }
-                suggestions
-            } else {
-                Vec::new()
-            };
+            }
+        }
 
         let mut actions = Vec::with_capacity(2);
         if suggestions.is_empty() {
@@ -567,7 +625,16 @@ impl ImeEngine {
             return;
         }
         let Some(reading) = self.user_data.promote_completion(prefix, surface) else {
-            self.session_history.reset_context();
+            // English reverse matches have no history entry yet; learn the
+            // mangled reading so plain history completion covers it next time.
+            if let Some(key) = english_reverse::surface_key(surface)
+                && english_reverse::reverse_match(prefix, &key).is_some()
+            {
+                self.user_data.record(prefix, surface);
+                self.session_history.record_commit(prefix, surface);
+            } else {
+                self.session_history.reset_context();
+            }
             return;
         };
         self.session_history.record_commit(&reading, surface);
@@ -897,6 +964,47 @@ mod tests {
                 "{reading}"
             );
         }
+    }
+
+    #[test]
+    fn english_typed_in_kana_mode_surfaces_ascii_words() {
+        let mut engine = ImeEngine::bundled();
+        engine.set_preferences(EnginePreferences {
+            live_conversion: false,
+            history_completion: false,
+            history_learning: false,
+            dictionary_packs: TECHNOLOGY_DICTIONARY,
+        });
+
+        type_text(&mut engine, "github");
+        assert_eq!(engine.snapshot().preedit, "ぎてゅb");
+        assert_eq!(engine.snapshot().phase, Phase::Composing);
+        assert!(
+            engine.snapshot().candidates.contains(&"GitHub".to_owned()),
+            "{:?}",
+            engine.snapshot().candidates
+        );
+
+        engine.handle(InputEvent::Space);
+        assert!(
+            engine.snapshot().candidates.contains(&"GitHub".to_owned()),
+            "{:?}",
+            engine.snapshot().candidates
+        );
+
+        let mut engine = ImeEngine::bundled();
+        engine.set_preferences(EnginePreferences {
+            live_conversion: false,
+            history_completion: false,
+            history_learning: false,
+            dictionary_packs: TECHNOLOGY_DICTIONARY,
+        });
+        type_text(&mut engine, "python");
+        assert!(
+            engine.snapshot().candidates.contains(&"Python".to_owned()),
+            "{:?}",
+            engine.snapshot().candidates
+        );
     }
 
     #[test]

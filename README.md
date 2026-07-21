@@ -9,6 +9,7 @@ This is a lightweight Japanese IME aiming to run entirely locally. It is current
 - Mozc OSS由来の基本辞書, ユーザー辞書, 分野別辞書（テクノロジー・ビジネス・クリエイティブ）
 - かな数詞の合成候補（半角・全角・漢数字）
 - 利用履歴からのローカル補完・管理の容易さ
+- かなモードのまま打った英単語の逆変換候補（ぎてゅb→GitHub、experimental）
 - 外部IMEからの辞書読み込み（Mac, Google日本語入力など）
 - 直前の確定語に応じて候補を出し分ける、永続化しないセッション内文脈学習
 

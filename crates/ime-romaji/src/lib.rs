@@ -167,6 +167,16 @@ impl RomajiComposer {
     }
 }
 
+/// Returns every `(kana, romaji)` spelling pair of the composition table.
+///
+/// Arrow shortcuts are excluded so reverse transliteration only sees kana.
+pub fn kana_spellings() -> impl Iterator<Item = (&'static str, &'static str)> {
+    ROMAJI_TABLE
+        .iter()
+        .filter(|(_, kana)| !matches!(*kana, "←" | "↓" | "↑" | "→"))
+        .map(|(romaji, kana)| (*kana, *romaji))
+}
+
 const fn is_vowel(byte: u8) -> bool {
     matches!(byte, b'a' | b'i' | b'u' | b'e' | b'o')
 }
