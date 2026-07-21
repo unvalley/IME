@@ -63,6 +63,9 @@ swiftc \
 cp "$workspace_dir/target/release/libime_ffi.dylib" "$frameworks_dir/"
 cp "$workspace_dir/platforms/macos/Resources/Info.plist" "$contents_dir/Info.plist"
 cp "$workspace_dir/platforms/macos/Resources/PkgInfo" "$contents_dir/PkgInfo"
+# The Mozc-derived dictionary notices must accompany binary redistributions.
+cp "$workspace_dir/crates/ime-converter/data/MOZC_DICTIONARY_LICENSE.txt" "$resources_dir/"
+cp "$workspace_dir/LICENSE" "$resources_dir/LICENSE.txt"
 swift "$workspace_dir/platforms/macos/GenerateIcon.swift" "$resources_dir/InputMethodIcon.tiff"
 for localization_dir in "$workspace_dir"/platforms/macos/Resources/*.lproj; do
   cp -R "$localization_dir" "$resources_dir/"

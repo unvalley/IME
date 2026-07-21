@@ -14,3 +14,7 @@ This is a lightweight Japanese IME aiming to run entirely locally. It is current
 - 直前の確定語に応じて候補を出し分ける、永続化しないセッション内文脈学習
 
 設定は、メニューバーの歯車から「Unvalley IME設定…」を選びます。ユーザー辞書タブの「辞書を読み込む…」から既存IMEの書き出しファイルを移行できます。
+
+## License
+
+MIT([LICENSE](LICENSE)）。同梱するMozc由来の辞書・接続データは別ライセンスで、[crates/ime-converter/data/MOZC_DICTIONARY_LICENSE.txt](crates/ime-converter/data/MOZC_DICTIONARY_LICENSE.txt)のnoticeが適用されます。ビルドした.appにはこのnoticeを同梱します。
