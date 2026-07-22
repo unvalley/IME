@@ -32,6 +32,9 @@ pub enum InputEvent {
 
 const _: () = assert!(std::mem::size_of::<InputEvent>() <= 8);
 
+/// Live conversion leaves readings shorter than this untouched.
+const MIN_LIVE_CONVERSION_CHARS: usize = 2;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ImeAction {
     UpdatePreedit(String),
@@ -312,15 +315,14 @@ impl ImeEngine {
                 push_unique(&mut candidates, surface.clone());
             }
         }
+        // The literal hiragana reading stays selectable; hiding it made
+        // single-kana words like み unreachable through the candidate window.
         for surface in self
             .dictionary
             .candidates(&self.reading)
             .into_iter()
             .map(|candidate| candidate.surface)
         {
-            if surface == self.reading && !candidates.is_empty() {
-                continue;
-            }
             push_unique(&mut candidates, surface);
         }
         insert_visible_katakana_candidate(&mut candidates, &self.reading);
@@ -491,12 +493,16 @@ impl ImeEngine {
             return self.selected_candidate().to_owned();
         }
 
-        let mut preedit = self
-            .live_preview
-            .as_ref()
-            .filter(|_| !self.live_preview_suppressed)
-            .cloned()
-            .unwrap_or_else(|| self.reading.clone());
+        // The live preview already covers the pending romaji through
+        // `resolved_reading`, so appending the raw pending here would show
+        // text that an Enter press does not commit.
+        if let Some(preview) = &self.live_preview
+            && !self.live_preview_suppressed
+        {
+            return preview.clone();
+        }
+
+        let mut preedit = self.reading.clone();
         preedit.push_str(self.romaji.preview());
         preedit
     }
@@ -532,9 +538,24 @@ impl ImeEngine {
         actions
     }
 
+    /// Returns the reading with the pending romaji resolved the way a flush
+    /// would resolve it, so previews and commits are computed on equal input.
+    fn resolved_reading(&self) -> String {
+        let mut resolved = self.reading.clone();
+        resolved.push_str(&self.romaji.clone().flush());
+        resolved
+    }
+
     fn refresh_live_preview(&mut self) {
-        self.live_preview = if self.preferences.live_conversion && !self.reading.is_empty() {
-            self.best_surface(&self.reading)
+        self.live_preview = if self.preferences.live_conversion {
+            let resolved = self.resolved_reading();
+            // A single kana is usually wanted literally; converting it makes
+            // ひらがな like み unreachable without an extra Escape.
+            if resolved.chars().count() >= MIN_LIVE_CONVERSION_CHARS {
+                self.best_surface(&resolved)
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -851,6 +872,57 @@ mod tests {
 
         let actions = engine.handle(InputEvent::Enter);
         assert!(actions.contains(&ImeAction::Commit("日本語".to_owned())));
+    }
+
+    #[test]
+    fn live_conversion_leaves_single_kana_literal() {
+        let mut engine = ImeEngine::bundled();
+        engine.set_preferences(EnginePreferences {
+            live_conversion: true,
+            history_completion: false,
+            history_learning: false,
+            dictionary_packs: 0,
+        });
+
+        type_text(&mut engine, "mi");
+        assert_eq!(engine.snapshot().preedit, "み");
+
+        let actions = engine.handle(InputEvent::Enter);
+        assert!(actions.contains(&ImeAction::Commit("み".to_owned())));
+    }
+
+    #[test]
+    fn enter_commits_exactly_what_the_live_preview_shows() {
+        let mut engine = ImeEngine::bundled();
+        engine.set_preferences(EnginePreferences {
+            live_conversion: true,
+            history_completion: false,
+            history_learning: false,
+            dictionary_packs: 0,
+        });
+
+        // The trailing n is still pending romaji; the preview must already
+        // account for it so Enter cannot commit something else.
+        type_text(&mut engine, "hon");
+        let displayed = engine.snapshot().preedit;
+        let actions = engine.handle(InputEvent::Enter);
+        assert!(
+            actions.contains(&ImeAction::Commit(displayed.clone())),
+            "displayed {displayed:?} but committed {actions:?}"
+        );
+    }
+
+    #[test]
+    fn single_kana_conversion_offers_the_literal_hiragana() {
+        let mut engine = ImeEngine::bundled();
+        type_text(&mut engine, "mi");
+        engine.handle(InputEvent::Space);
+
+        assert!(
+            engine.snapshot().candidates.contains(&"み".to_owned()),
+            "{:?}",
+            engine.snapshot().candidates
+        );
     }
 
     #[test]
