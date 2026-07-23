@@ -349,18 +349,22 @@ private struct DomainDictionaryToggle: View {
     @State private var showsWords = false
 
     var body: some View {
+        // A multiline Toggle label makes the Form align the switch with the
+        // first text line while the sibling button centers on the whole row;
+        // keeping the switch label-free centers both controls together.
         HStack(spacing: 12) {
-            Toggle(isOn: Binding(
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Toggle(title, isOn: Binding(
                 get: { model.isDictionaryPackEnabled(mask) },
                 set: { model.setDictionaryPack(mask, enabled: $0) }
-            )) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                    Text(description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            ))
+            .labelsHidden()
             Button {
                 showsWords = true
             } label: {
