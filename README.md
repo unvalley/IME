@@ -18,6 +18,7 @@ Currently it's for me.
 
 ## License
 
-MIT([LICENSE](LICENSE)）
+Slime IME is licensed under the MIT License.
 
-同梱するMozc由来の辞書・接続データは別ライセンスで、[crates/slime-converter/data/MOZC_DICTIONARY_LICENSE.txt](crates/slime-converter/data/MOZC_DICTIONARY_LICENSE.txt)のnoticeが適用
+This project includes third-party components that are distributed
+under their respective licenses. See [MOZC_DICTIONARY_LICENSE.txt](crates/slime-converter/data/MOZC_DICTIONARY_LICENSE.txt).
