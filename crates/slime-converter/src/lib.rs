@@ -5,21 +5,28 @@ mod compact;
 
 use bumpalo::{Bump, collections::String as BumpString};
 use compact::CompactDictionary;
+use compact_str::CompactString;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, OnceLock};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DictionaryEntry {
-    pub reading: String,
-    pub surface: String,
+    pub reading: CompactString,
+    pub surface: CompactString,
     pub left_id: u16,
     pub right_id: u16,
     pub word_cost: i32,
 }
 
+const _: () = assert!(std::mem::size_of::<DictionaryEntry>() <= 64);
+
 impl DictionaryEntry {
     #[must_use]
-    pub fn new(reading: impl Into<String>, surface: impl Into<String>, word_cost: i32) -> Self {
+    pub fn new(
+        reading: impl Into<CompactString>,
+        surface: impl Into<CompactString>,
+        word_cost: i32,
+    ) -> Self {
         Self {
             reading: reading.into(),
             surface: surface.into(),
@@ -31,8 +38,8 @@ impl DictionaryEntry {
 
     #[must_use]
     pub fn with_pos(
-        reading: impl Into<String>,
-        surface: impl Into<String>,
+        reading: impl Into<CompactString>,
+        surface: impl Into<CompactString>,
         left_id: u16,
         right_id: u16,
         word_cost: i32,
@@ -88,8 +95,8 @@ impl CandidateRanker for CostOnlyRanker {
 
 #[derive(Clone, Debug)]
 pub struct DictionaryLayer {
-    id: String,
-    name: String,
+    id: CompactString,
+    name: CompactString,
     entries: Arc<[DictionaryEntry]>,
     max_reading_bytes: usize,
 }
@@ -97,8 +104,8 @@ pub struct DictionaryLayer {
 impl DictionaryLayer {
     #[must_use]
     pub fn new(
-        id: impl Into<String>,
-        name: impl Into<String>,
+        id: impl Into<CompactString>,
+        name: impl Into<CompactString>,
         mut entries: Vec<DictionaryEntry>,
     ) -> Self {
         sort_entries(&mut entries);
@@ -1718,6 +1725,14 @@ mod tests {
                 conversion.cost
             }
         }
+    }
+
+    #[test]
+    fn short_dictionary_entry_strings_stay_inline() {
+        let entry = DictionaryEntry::new("かんじ", "漢字", 500);
+
+        assert!(!entry.reading.is_heap_allocated());
+        assert!(!entry.surface.is_heap_allocated());
     }
 
     #[test]

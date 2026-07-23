@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use slime_converter::Dictionary;
+use slime_converter::{Dictionary, DictionaryEntry, DictionaryLayer};
 
 fn main() {
     let dictionary = Dictionary::bundled();
@@ -19,6 +19,16 @@ fn main() {
     run("converter/n_best_phrase", iterations, || {
         black_box(dictionary.candidates(black_box("わたしはにほん")));
     });
+    run("converter/short_dictionary_layer", iterations, || {
+        black_box(short_dictionary_layer());
+    });
+}
+
+fn short_dictionary_layer() -> DictionaryLayer {
+    let entries = (0..256)
+        .map(|_| DictionaryEntry::with_pos("かんじ", "漢字", 1_851, 1_851, 500))
+        .collect();
+    DictionaryLayer::new("user", "ユーザー辞書", entries)
 }
 
 fn iterations(default: u64) -> u64 {
