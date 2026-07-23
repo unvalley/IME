@@ -13,7 +13,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.97"
 license = "MIT"
-repository = "https://github.com/unvalley/IME"
+repository = "https://github.com/unvalley/slime"
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
